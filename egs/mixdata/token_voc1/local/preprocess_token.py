@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 
 # Copyright 2019 Tomoki Hayashi
-# Copyright 2024 Yuxun Tang
 #  MIT License (https://opensource.org/licenses/MIT)
 
 """Perform preprocessing and raw feature extraction."""
@@ -186,12 +185,6 @@ def main():
         help="whether to use multi layer feature.",
     )
     parser.add_argument(
-        "--use-multi-resolution-token",
-        default=False,
-        action="store_true",
-        help="whether to input multi resolution token.",
-    )
-    parser.add_argument(
         "--emb-layer",
         type=int,
         default=1,
@@ -202,12 +195,6 @@ def main():
         type=str,
         default="facebook/hubert-base-ls960",
         help="pretrained model for embedding feature",
-    )
-    parser.add_argument(
-        "--skip_existed_file",
-        type=str,
-        default=False,
-        action="store_true"
     )
     args = parser.parse_args()
 
@@ -258,7 +245,6 @@ def main():
 
     if args.use_embedding_feats is False:
         # get token single layer / multi layer
-        logging.info(f'path: {args.text}')
         if not os.path.isdir(args.text): # single layer token file
             with open(args.text) as f:
                 lines = [line.strip() for line in f.readlines()]
@@ -276,7 +262,7 @@ def main():
                     tokens = tokens.split() 
                     if text.get(utt_name) is None:
                         text[utt_name] = []
-                    text[utt_name].append(tokens)                    
+                    text[utt_name].append(tokens)
 
     # load spk2utt file
     if args.utt2spk is not None:
@@ -293,11 +279,10 @@ def main():
 
     # process each data
     for utt_id, (audio, fs) in tqdm(dataset):
-        if args.skip_existed_file and os.path.exists(os.path.join(args.dumpdir, f"{utt_id}.h5")):
+        if os.path.exists(os.path.join(args.dumpdir, f"{utt_id}.h5")):
             logging.info(f'{utt_id} skip')
             continue
         logging.info(f'{utt_id} run')
-        
         # check
         assert len(audio.shape) == 1, f"{utt_id} seems to be multi-channel signal."
         assert (
@@ -348,33 +333,19 @@ def main():
                 mel = features[args.emb_layer].squeeze(0).cpu().detach().numpy()
                 # Output mel as (T, C) 
         else:
-            if not args.use_multi_resolution_token:
-                # use hubert index instead of mel
-                mel = np.array(text[utt_id]).astype(np.int64)
-                if mel.ndim > 1: 
-                    mel = mel.transpose(1, 0)
-                else:
-                    mel = mel.reshape(-1, 1)
-                # mel input as (T, 1)
+            # use hubert index instead of mel
+            mel = np.array(text[utt_id]).astype(np.int64)
+            if mel.ndim > 1: 
+                mel = mel.transpose(1, 0)
+            else:
                 if args.use_multi_layer:
                     mel = mel.reshape(-1, args.emb_layer + 1)
-            else:
-                #NOTE(Yuxun): source resolution is the finest grained 
-                resolution = config['generator_params']['resolution']
-                resolution = sorted(resolution)
-                logging.info(f'Origin resolution of feature is {resolution[0]}')
-                rs_token = text[utt_id]
-                if not isinstance(text[utt_id][0], list):
-                    rs_token = [rs_token]
-                rs_token = sorted(rs_token, key=len, reverse=True)
-                mel = np.array(rs_token[0]).astype(np.int64)
-                
-        logging.info(f'mel({mel.shape})')
-        # logging.info(f'mel: {mel}')
+                else:
+                    mel = mel.reshape(-1, 1)
+            # mel: (T, 1) / (T, L)
+        # logging.info(f'mel({mel.shape}): {mel}')
         
         if args.spk2idx is not None:
-            if args.use_multi_resolution_token:
-                logging.warn("It doesn't support speaker embedding now when using multi reoslution features.")
             spk = utt2spk[utt_id]
             if spk in spk2idx:
                 idx = spk2idx[spk]
@@ -432,28 +403,11 @@ def main():
                 "wave",
                 audio.astype(np.float32),
             )
-            if not args.use_multi_resolution_token:
-                write_hdf5(
-                    os.path.join(args.dumpdir, f"{utt_id}.h5"),
-                    "feats",
-                    mel.astype(np.float32),
-                )
-            else:
-                for rs, feat in zip(resolution, rs_token):
-                    mel = np.array(feat).astype(np.float32)
-                    mel = mel.reshape(-1, 1)
-                    logging.info(f'{rs}: {mel.shape}')
-                    logging.info(f'mel: {mel.shape}')
-                    write_hdf5(
-                        os.path.join(args.dumpdir, f"{utt_id}.h5"),
-                        f"feats-{rs}",
-                        mel,
-                    )
-                write_hdf5(
-                    os.path.join(args.dumpdir, f"{utt_id}.h5"),
-                    f"resolution",
-                    np.array(resolution).astype(np.int32),
-                )
+            write_hdf5(
+                os.path.join(args.dumpdir, f"{utt_id}.h5"),
+                "feats",
+                mel.astype(np.float32),
+            )
             if args.use_f0:
                 write_hdf5(
                     os.path.join(args.dumpdir, f"{utt_id}.h5"),
