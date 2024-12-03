@@ -332,9 +332,9 @@ def main():
 
         # make sure the audio length and feature length are matched
         logging.info(f"Mod: {len(audio) - len(mel) * config['hop_size']}")
-        if len(mel) * config["hop_size"] <= len(audio):
+        if len(mel) * config["hop_size"] < len(audio):
             logging.warning(
-                "len(mel) * config['hop_size'] <= len(audio), may be errors"
+                f"[{utt_id=}] len(mel) * config['hop_size'] <= len(audio), may be errors."
             )
         # logging.info(f'audio: {len(audio)}')
         # import math
