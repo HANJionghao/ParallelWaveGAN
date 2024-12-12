@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright 2019 Tomoki Hayashi
+# Copyright 2024 Yuxun Tang
 #  MIT License (https://opensource.org/licenses/MIT)
 
 """Perform preprocessing and raw feature extraction."""
@@ -46,6 +47,7 @@ def _convert_to_continuous_f0(f0: np.array) -> np.array:
 
     return f0
 
+
 def f0_dio(
     audio,
     sampling_rate,
@@ -77,6 +79,7 @@ def f0_dio(
         x = audio.astype(np.double)
     frame_period = 1000 * hop_size / sampling_rate
     import pyworld
+
     f0, timeaxis = pyworld.dio(
         x,
         sampling_rate,
@@ -180,17 +183,43 @@ def main():
         help="whether to use pretrain model to get feature.",
     )
     parser.add_argument(
-        "--emb-layer",
+        "--use-multi-layer",
+        default=False,
+        action="store_true",
+        help="whether to use multi layer feature.",
+    )
+    parser.add_argument(
+        "--use-multi-resolution-token",
+        default=False,
+        action="store_true",
+        help="whether to input multi resolution token.",
+    )
+    parser.add_argument(
+        "--feat-layer",
         type=int,
         default=1,
-        help="logging level. higher is more logging. (default=1)",
+        help="all layer numbert or specific layer",
     )
+    parser.add_argument(
+        "--multi-token-files",
+        type=str,
+        default="",
+        help="list of token files in multi token pattern",
+    )
+    # parser.add_argument(
+    #     "--multi-token-mix-type",
+    #     type=str,
+    #     default="sequence",
+    #     help="token mix type in multi token pattern",
+    #     choices=["sequence", "frame"],
+    # )
     parser.add_argument(
         "--pretrained-model",
         type=str,
         default="facebook/hubert-base-ls960",
         help="pretrained model for embedding feature",
     )
+    parser.add_argument("--skip_existed_file", default=False, action="store_true")
     parser.add_argument(
         "--spk-embed-scp",
         type=str,
@@ -246,25 +275,31 @@ def main():
             return_sampling_rate=True,
         )
 
-    # get token single layer / multi layer
-    if not os.path.isdir(args.text): # single layer token file
-        with open(args.text) as f:
-            lines = [line.strip() for line in f.readlines()]
-        text = {
-            line.split(maxsplit=1)[0]: line.split(maxsplit=1)[1].split() for line in lines
-        }
-    else:  # multi-stream: directory of token files
-        text = {}
-        for fname in os.listdir(args.text):
-            fpath = os.path.join(args.text, fname)
-            with open(fpath, 'r') as f:
+    if args.use_embedding_feats is False:
+        # get token single layer / multi layer
+        logging.info(f"path: {args.text}")
+        if not os.path.isdir(args.text):  # single layer token file
+            with open(args.text) as f:
                 lines = [line.strip() for line in f.readlines()]
-            for line in lines:
-                utt_name, tokens = line.split(maxsplit=1) # name, list
-                tokens = tokens.split() 
-                if text.get(utt_name) is None:
-                    text[utt_name] = []
-                text[utt_name].append(tokens)
+            text = {
+                line.split(maxsplit=1)[0]: line.split(maxsplit=1)[1].split()
+                for line in lines
+            }
+        else:  # multi-stream: directory of token files
+            text = {}
+            token_files = args.multi_token_files.split(" ")
+            for fname in token_files:
+                fpath = os.path.join(args.text, fname)
+                if not os.path.exists(fpath):
+                    raise FileExistsError(f"{fpath} does not exist.")
+                with open(fpath, "r", encoding="utf-8") as f:
+                    for line in f:
+                        utt_name, tokens = line.strip().split(maxsplit=1)  # name, list
+                        tokens = tokens.split()
+                        if text.get(utt_name) is None:
+                            text[utt_name] = []
+                        # combine in sequence way, [T]
+                        text[utt_name].append(tokens)
 
     # load spk2utt file
     if args.utt2spk is not None:
@@ -275,7 +310,9 @@ def main():
             lines = [l.replace("\n", "") for l in f.readlines()]
         spk2idx = {l.split()[0]: int(l.split()[1]) for l in lines}
 
-    spk_embed_loader = kaldiio.load_scp(args.spk_embed_scp) if args.spk_embed_scp is not None else None
+    spk_embed_loader = (
+        kaldiio.load_scp(args.spk_embed_scp) if args.spk_embed_scp is not None else None
+    )
 
     # check directly existence
     if not os.path.exists(args.dumpdir):
@@ -283,6 +320,13 @@ def main():
 
     # process each data
     for utt_id, (audio, fs) in tqdm(dataset):
+        if args.skip_existed_file and os.path.exists(
+            os.path.join(args.dumpdir, f"{utt_id}.h5")
+        ):
+            logging.info(f"{utt_id} skip")
+            continue
+        logging.info(f"{utt_id} run")
+
         # check
         assert len(audio.shape) == 1, f"{utt_id} seems to be multi-channel signal."
         assert (
@@ -301,39 +345,73 @@ def main():
                 frame_length=config["trim_frame_size"],
                 hop_length=config["trim_hop_size"],
             )
-        
+
         # use feature embedding(for teacher-forcing)
         if args.use_embedding_feats:
             os.environ["http_proxy"] = "http://127.0.0.1:7890"
             os.environ["https_proxy"] = "http://127.0.0.1:7890"
             from transformers import AutoModel, Wav2Vec2FeatureExtractor
+
             pretrained_model = args.pretrained_model
-            logging.info(f'model: {pretrained_model}')
-            model = AutoModel.from_pretrained(pretrained_model, cache_dir='/data3/tyx/pretrain_model')
-            processor = Wav2Vec2FeatureExtractor.from_pretrained(pretrained_model, cache_dir='/data3/tyx/pretrain_model') 
-            # model = AutoModel.from_pretrained(pretrained_model, cache_dir='/data3/tyx/pretrain_model')
-            # processor = Wav2Vec2CTCTokenizer.from_pretrained(pretrained_model, cache_dir='/data3/tyx/pretrain_model') 
+            logging.info(f"model: {pretrained_model}")
+            model = AutoModel.from_pretrained(pretrained_model)
+            processor = Wav2Vec2FeatureExtractor.from_pretrained(pretrained_model)
+
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            model.to(device)
             inputs = processor(audio, sampling_rate=fs, return_tensors="pt")
-            outputs = model(**inputs, output_hidden_states=True)
+
+            def move_to_device(dict, device):
+                for key in dict:
+                    dict[key] = dict[key].to(device)
+                return dict
+
+            inputs = move_to_device(inputs, device)
+            with torch.no_grad():
+                outputs = model(**inputs, output_hidden_states=True)
+
             features = outputs.hidden_states
-            mel = features[args.emb_layer].squeeze(0).detach().numpy()
-            # mel: (T, 1024) 
-        else:
-            # use hubert index instead of mel
-            mel = np.array(text[utt_id]).astype(np.int64)
-            if mel.ndim > 1: 
-                mel = mel.transpose(1, 0)
+            if args.use_multi_layer:
+                mel = torch.stack(features[: args.emb_layer + 1], 0)
+                # mel input as (L, 1, T, C)
+                mel = mel.squeeze(1).transpose(0, 1).cpu().detach().numpy()
+                # Output mel as (T, L, C)
             else:
-                mel = mel.reshape(-1, 1)
-            # mel: (T, 1)
-        # logging.info(f'mel({mel.shape})')
-        
+                mel = features[args.emb_layer].squeeze(0).cpu().detach().numpy()
+                # Output mel as (T, C)
+        else:
+            if args.use_multi_resolution_token:
+                # NOTE(Yuxun): source resolution is the finest grained
+                resolution = config["generator_params"]["resolution"]
+                resolution = sorted(resolution)
+                logging.info(f"Origin resolution of feature is {resolution[0]}")
+                rs_token = text[utt_id]
+                if not isinstance(text[utt_id][0], list):
+                    rs_token = [rs_token]
+                rs_token = sorted(rs_token, key=len, reverse=True)
+                mel = np.array(rs_token[0]).astype(np.int64)
+            else:
+                # use hubert index instead of mel
+                mel = np.array(text[utt_id]).astype(np.int64)  # [L, T], 'sequence'
+                if mel.ndim > 1:
+                    mel = mel.transpose(1, 0)
+                else:
+                    mel = mel.reshape(-1, 1)
+                # mel input as (T, 1)
+                # NOTE(Yuxun): add mix_type for multi token, mel is under 'frame' type here.
+                if args.use_multi_layer:
+                    mel = mel.reshape(-1, args.feat_layer)  # [T, L]
+
         if args.spk2idx is not None:
+            if args.use_multi_resolution_token:
+                logging.warning(
+                    "It doesn't support speaker embedding now when using multi reoslution features."
+                )
             spk = utt2spk[utt_id]
             if spk in spk2idx:
                 idx = spk2idx[spk]
             else:
-                logging.warn(f"{spk} is unknown speaker.")
+                logging.warning(f"{spk} is unknown speaker.")
                 max_idx = max(spk2idx.values()) + 1
                 idx = max_idx
 
@@ -343,7 +421,7 @@ def main():
 
         # make sure the audio length and feature length are matched
         logging.info(f"Mod: {len(audio) - len(mel) * config['hop_size']}")
-        if len(mel) * config["hop_size"] < len(audio):
+        if len(mel) * config["hop_size"] <= len(audio):
             logging.warning(
                 f"[{utt_id=}] len(mel) * config['hop_size'] <= len(audio), may be errors."
             )
@@ -354,15 +432,20 @@ def main():
         mel = mel[: len(audio) // config["hop_size"]]
         audio = audio[: len(mel) * config["hop_size"]]
         assert len(mel) * config["hop_size"] == len(audio)
-        
+
+        # if args.multi_token_mix_type == "frame":
+        #     mel = mel
+        # elif args.mult_token_mix_tpe == "sequence":
+        #     mel = mel.transpose(1, 0)
+
         # use f0
         if args.use_f0:
             f0 = f0_dio(
                 audio,
                 sampling_rate=config["sampling_rate"],
                 hop_size=config["hop_size"],
-            ) # (#frames,) 
-            # logging.info(f'f0({f0.shape}): {f0}') 
+            )  # (#frames,)
+            # logging.info(f'f0({f0.shape}): {f0}')
             if len(f0) > len(mel):
                 f0 = f0[: len(mel)]
             else:
@@ -372,7 +455,7 @@ def main():
         if config["global_gain_scale"] > 0.0:
             audio *= config["global_gain_scale"]
         if np.abs(audio).max() >= 1.0:
-            logging.warn(
+            logging.warning(
                 f"{utt_id} causes clipping. "
                 "it is better to re-consider global gain scale."
             )
@@ -386,11 +469,28 @@ def main():
                 "wave",
                 audio.astype(np.float32),
             )
-            write_hdf5(
-                os.path.join(args.dumpdir, f"{utt_id}.h5"),
-                "feats",
-                mel.astype(np.float32),
-            )
+            if not args.use_multi_resolution_token:
+                write_hdf5(
+                    os.path.join(args.dumpdir, f"{utt_id}.h5"),
+                    "feats",
+                    mel.astype(np.float32),
+                )
+            else:
+                for rs, feat in zip(resolution, rs_token):
+                    mel = np.array(feat).astype(np.float32)
+                    mel = mel.reshape(-1, 1)
+                    logging.info(f"{rs}: {mel.shape}")
+                    logging.info(f"mel: {mel.shape}")
+                    write_hdf5(
+                        os.path.join(args.dumpdir, f"{utt_id}.h5"),
+                        f"feats-{rs}",
+                        mel,
+                    )
+                write_hdf5(
+                    os.path.join(args.dumpdir, f"{utt_id}.h5"),
+                    f"resolution",
+                    np.array(resolution).astype(np.int32),
+                )
             if args.use_f0:
                 write_hdf5(
                     os.path.join(args.dumpdir, f"{utt_id}.h5"),
@@ -422,7 +522,7 @@ def main():
                     f0.astype(np.float32),
                     allow_pickle=False,
                 )
-                
+
         else:
             raise ValueError("support only hdf5 or npy format.")
 
