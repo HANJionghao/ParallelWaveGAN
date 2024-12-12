@@ -44,10 +44,15 @@ eval_set="test"         # name of evaluation data direcotry
 token_text=""
 use_f0=true                    # whether to add f0 
 use_embedding_feats=false      # whether to use pretrain feature as input
+use_spk_embed=false            # whether to use speaker embedding
+spk_embed_scp_tag="espnet_spk"  # scp file for pre-extracted speaker embeddings
 pretrained_model="facebook/hubert-base-ls960"      # pre-trained model (confirm it on Huggingface)
 emb_layer=6
 fs=16000
 subexp="exp"
+
+train_batch_sampler_conf="{}"
+dev_batch_sampler_conf="{}"
 
 # shellcheck disable=SC1091
 . utils/parse_options.sh || exit 1;
@@ -112,7 +117,11 @@ EOF
     (
         [ ! -e "${dumpdir}/${name}/raw" ] && mkdir -p "${dumpdir}/${name}/raw"
         echo "Feature extraction start. See the progress via ${dumpdir}/${name}/raw/preprocessing.*.log."
-        utils/make_subset_data.sh "data/${name}" "${n_jobs}" "${dumpdir}/${name}/raw"
+        extra_files=
+        if [ ${use_spk_embed} == true ]; then
+            extra_files+="data/${name}/${spk_embed_scp_tag}.scp "
+        fi
+        utils/make_subset_data.sh "data/${name}" "${n_jobs}" "${dumpdir}/${name}/raw" "${extra_files}"
 
         _opts=
         if [ ${use_f0} == true ]; then
@@ -122,6 +131,9 @@ EOF
             _opts+="--use-embedding-feats "
             _opts+="--pretrained-model ${pretrained_model} "
             _opts+="--emb-layer ${emb_layer} "
+        fi
+        if [ ${use_spk_embed} == true ]; then
+            _opts+="--spk-embed-scp ${dumpdir}/${name}/raw/${spk_embed_scp_tag}.JOB.scp "
         fi
 
         ${train_cmd} JOB=1:${n_jobs} "${dumpdir}/${name}/raw/preprocessing.JOB.log" \
@@ -141,9 +153,9 @@ EOF
 fi
 
 if [ -z "${tag}" ]; then
-    expdir="${subexp}/${train_set}_opencpop_$(basename "${conf}" .yaml)"
+    expdir="${subexp}/${train_set}_$(basename "${conf}" .yaml)"
 else
-    expdir="${subexp}/${train_set}_opencpop_${tag}"
+    expdir="${subexp}/${train_set}_${tag}"
 fi
 
 if [ "${stage}" -le 2 ] && [ "${stop_stage}" -ge 2 ]; then
@@ -158,6 +170,9 @@ if [ "${stage}" -le 2 ] && [ "${stop_stage}" -ge 2 ]; then
     if [ ${use_f0} == true ]; then
         _opts+="--use-f0 "
     fi
+    if [ ${use_spk_embed} == true ]; then
+        _opts+="--additional-feature-keys spemb "
+    fi
     # shellcheck disable=SC2012
     resume="$(ls -dt "${expdir}"/*.pkl | head -1 || true)"
     echo "Training start. See the progress via ${expdir}/train.log."
@@ -166,6 +181,8 @@ if [ "${stage}" -le 2 ] && [ "${stop_stage}" -ge 2 ]; then
             --config "${conf}" \
             --train-dumpdir "${dumpdir}/${train_set}/raw" \
             --dev-dumpdir "${dumpdir}/${dev_set}/raw" \
+            --train-batch-sampler-conf "${train_batch_sampler_conf}" \
+            --dev-batch-sampler-conf "${dev_batch_sampler_conf}" \
             --outdir "${expdir}" \
             --resume "${resume}" \
             --verbose "${verbose}" ${_opts}
@@ -187,12 +204,15 @@ if [ "${stage}" -le 3 ] && [ "${stop_stage}" -ge 3 ]; then
         if [ ${use_f0} == true ]; then
             _opts+="--use-f0 "
         fi
+        if [ ${use_spk_embed} == true ]; then
+            _opts+="--additional-feature-keys spemb "
+        fi
         ${cuda_cmd} --gpu "${n_gpus}" "${outdir}/${name}/decode.log" \
             parallel-wavegan-decode \
                 --dumpdir "${dumpdir}/${name}/raw" \
                 --checkpoint "${checkpoint}" \
                 --outdir "${outdir}/${name}" \
-                --verbose "${verbose}" ${_opts}      
+                --verbose "${verbose}" ${_opts} 
         echo "Successfully finished decoding of ${name} set."
     ) &
     pids+=($!)

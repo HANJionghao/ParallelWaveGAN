@@ -124,6 +124,13 @@ def main():
         action="store_true",
         help="whether to use multi resolution_token.",
     )
+    parser.add_argument(
+        "--additional-feature-keys",
+        default=[], # TODO(jhan): verify if works when --additional-feature-keys is not specified
+        type=str,
+        nargs="*",
+        help="additional feature keys to use.",
+    )
     args = parser.parse_args()
 
     # set logger
@@ -203,6 +210,10 @@ def main():
                 if args.use_multi_resolution_token:
                     resolution_query = "*.h5"
                     resolution_load_fn = lambda x: read_hdf5(x, "resolution")
+                additional_feature_query_load_fn = {
+                    key: ("*.h5", lambda x: read_hdf5(x, key))
+                    for key in args.additional_feature_keys
+                }
             elif config["format"] == "npy":
                 mel_query = "*-feats.npy"
                 mel_load_fn = np.load
@@ -214,6 +225,9 @@ def main():
                     f0_load_fn = np.load
                     excitation_query = "*-excitation.npy"
                     excitation_load_fn = np.load
+                additional_feature_query_load_fn = {
+                    key: (f"*-{key}.npy", np.load) for key in args.additional_feature_keys
+                }
             else:
                 raise ValueError("Support only hdf5 or npy format.")
 
@@ -225,6 +239,7 @@ def main():
                     mel_load_fn=mel_load_fn,
                     f0_load_fn=f0_load_fn,
                     return_utt_id=True,
+                    additional_feature_query_load_fn=additional_feature_query_load_fn,
                 )
             elif not use_f0_and_excitation:
                 if args.use_multi_resolution_token:
@@ -268,8 +283,9 @@ def main():
         total_rtf = 0.0
         with torch.no_grad(), tqdm(dataset, desc="[decode]") as pbar:
             for idx, items in enumerate(pbar, 1):
+                additional_features = None
                 if args.use_f0:
-                    utt_id, c, f0 = items
+                    utt_id, c, f0, additional_features = items
                     excitation = None
                 elif not use_f0_and_excitation:
                     utt_id, c = items
@@ -290,6 +306,12 @@ def main():
                 if excitation is not None:
                     excitation = torch.tensor(excitation, dtype=torch.float).to(device)
                     batch.update(excitation=excitation)
+                if additional_features is not None:
+                    for key in additional_features:
+                        additional_features[key] = torch.tensor(
+                            additional_features[key], dtype=torch.float # TODO(jhan): torch.float32?
+                        ).unsqueeze(0).to(device)
+                    batch.update(additional_feats=additional_features)
                 if args.store_feature:
                     batch.update(store_feature=True)
                     y = model.inference(**batch)

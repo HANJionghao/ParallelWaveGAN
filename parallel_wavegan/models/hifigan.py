@@ -18,7 +18,6 @@ from parallel_wavegan.layers import CausalConv1d, CausalConvTranspose1d
 from parallel_wavegan.layers import HiFiGANResidualBlock as ResidualBlock
 from parallel_wavegan.layers.duration_predictor import DurationPredictor
 from parallel_wavegan.layers.length_regulator import LengthRegulator
-from parallel_wavegan.layers.conv_adapter import ConvAdapter
 from parallel_wavegan.utils import read_hdf5
 
 
@@ -1293,7 +1292,7 @@ class DiscreteSymbolDurationGenerator(DiscreteSymbolHiFiGANGenerator):
 
 class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
     """Discrete Symbol HiFiGAN generator module with f0."""
-    
+
     def __init__(
         self,
         in_channels=512,
@@ -1314,6 +1313,7 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
         nonlinear_activation="LeakyReLU",
         nonlinear_activation_params={"negative_slope": 0.1},
         use_weight_norm=True,
+        use_spk_embed=False,
         # discret token
         use_embedding_feats=False,
         use_weight_sum=False,
@@ -1367,28 +1367,35 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
             nonlinear_activation_params=nonlinear_activation_params,
             use_weight_norm=use_weight_norm,
         )
-        
+
         self.use_f0 = use_f0
         if use_f0 is True:
             self.f0_embedding = torch.nn.Linear(
                 in_features=1,
                 out_features=linear_channel,
             )
-        
+
         self.use_weight_sum = use_weight_sum
         if use_weight_sum is True:
             self.layer_num = layer_num
             self.weights = torch.nn.Parameter(torch.ones(self.layer_num))
             self.use_fix_weight = use_fix_weight
-            
-            if use_fix_weight is True: # fix update
-                self.weights = torch.nn.Parameter(torch.ones(self.layer_num), requires_grad=False)
-            else: 
+
+            if use_fix_weight is True:  # fix update
+                self.weights = torch.nn.Parameter(
+                    torch.ones(self.layer_num), requires_grad=False
+                )
+            else:
                 self.weights = torch.nn.Parameter(torch.ones(self.layer_num))
-                
-            self.emb = torch.nn.ModuleList([
-                torch.nn.Embedding(num_embeddings=num_embs, embedding_dim=in_channels) for _ in range(self.layer_num)
-            ])
+
+            self.emb = torch.nn.ModuleList(
+                [
+                    torch.nn.Embedding(
+                        num_embeddings=num_embs, embedding_dim=in_channels
+                    )
+                    for _ in range(self.layer_num)
+                ]
+            )
 
         self.input_conv = torch.nn.Conv1d(
             in_channels + linear_channel if use_f0 is True else in_channels,
@@ -1399,16 +1406,24 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
         )
 
         self.use_embedding_feats = use_embedding_feats
-        
-    
-    def forward(self, c, f0=None, store_feature=False):
+        self.use_spk_embed = use_spk_embed
+
+        if self.use_spk_embed:
+            self.concat_spk_emb = concat_spk_emb
+            if not self.concat_spk_emb:
+                self.embed_proj = torch.nn.Linear(spk_emb_dim, in_channels)
+
+    def forward(
+        self, c, f0=None, additional_feats=None, store_feature=False
+    ):  # TODO(jhan): check with yuxun: how store_feature is passed
         """Calculate forward propagation.
 
         Args:
             c (Tensor): Input tensor token: (B, 2, T). or (B, 1, T) or (B, L, T)
                         or for embedding feature: (B, T, C) or (B, L, T, C)
             f0 (Tensor): Input tensor (B, 1, T)
-            store_feature (Boolean): Whether to store embedding feature 
+            additional_feats (dict): Additional features for embedding feature
+            store_feature (Boolean): Whether to store embedding feature
         Returns:
             Tensor: Output tensor (B, out_channels, T').
         """
@@ -1429,11 +1444,11 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
         else:
             # NOTE(Yuxun): update for using pretrain model layer output as input
             if self.use_weight_sum:
-                assert c.size(1) == self.layer_num # (B, L, T) or (B, L, T, C)
+                assert c.size(1) == self.layer_num  # (B, L, T) or (B, L, T, C)
                 if not self.use_embedding_feats:
                     embedded = []
                     for i, embedding_layer in enumerate(self.emb):
-                    # Apply the i-th embedding layer to the i-th layer of input
+                        # Apply the i-th embedding layer to the i-th layer of input
                         embedded.append(embedding_layer(c[:, i].long()))
                     c = torch.stack(embedded, dim=1)
                     c = c.transpose(-1, 1)
@@ -1443,23 +1458,38 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
                 if self.use_fix_weight:
                     norm_weights = self.weights
                 else:
-                    norm_weights = F.softmax(self.weights, dim=-1) 
+                    norm_weights = F.softmax(self.weights, dim=-1)
                 # logging.info(f'norm_weights({norm_weights.shape}): {norm_weights}')
                 # c: (B, C, T, L) * (L,) -> (B, C, T)
                 c = torch.matmul(c, norm_weights)
-                
+
             elif self.use_embedding_feats is False:
                 assert c.size(1) == 1
                 c = self.emb(c.squeeze(1).long()).transpose(1, 2)  # (B, C, T)
-        
+
+        if self.use_spk_embed:
+            # c: (B, C, T)
+            assert "spemb" in additional_feats, (
+                "Some speaker embedding is not provided. "
+                "Please remove the current dump folder "
+                "and rerun run.sh with --use_spk_embed true"
+            )
+            g = F.normalize(additional_feats["spemb"])  # (B, C_spemb)
+            if not self.concat_spk_emb:
+                g = self.embed_proj(g).unsqueeze(2)  # (B, C, 1)
+                c = c + g  # (B, C, T)
+            else:
+                g = g.unsqueeze(2)  # (B, C_spemb, 1)
+                c = torch.cat([c, g], dim=-1)  # (B, C + C_spemb, T)
+
         # NOTE(Yuxun): c shoulde reshape as (B, T, C)
         if store_feature:
             return c
-            
+
         if f0 is not None and self.use_f0:
             f0 = self.f0_embedding(f0.transpose(1, 2)).transpose(1, 2)
             c = torch.cat((c, f0), dim=1)
-        
+
         # c should input as (B, C, T)
         c = self.input_conv(c)
         for i in range(self.num_upsamples):
@@ -1470,9 +1500,16 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
             c = cs / self.num_blocks
         c = self.output_conv(c)
         return c
-    
-    
-    def inference(self, c, f0=None, g=None, normalize_before=False, store_feature=False):
+
+    def inference(
+        self,
+        c,
+        f0=None,
+        g=None,
+        additional_feats=None,
+        normalize_before=False,
+        store_feature=False,  # TODO(jhan): check with yuxun: how store_feature is passed
+    ):
         """Perform inference.
 
         Args:
@@ -1490,24 +1527,25 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
         if g is not None:
             c = c[:, 0:1]
             c = torch.cat([c, c.new_zeros(*c.size()).fill_(g).to(c.device)], dim=1)
-            
+
         if self.use_f0 and f0 is not None:
             f0 = f0.unsqueeze(0).unsqueeze(0)
-            
+
         if not self.use_embedding_feats:
             if self.num_spk_embs <= 0 and not self.use_weight_sum:
                 c = c[:, 0:1]
-        
-        c = self.forward(c.unsqueeze(0).transpose(1, 2), f0, store_feature)
+        c = self.forward(
+            c.unsqueeze(0).transpose(1, 2), f0, additional_feats, store_feature
+        )
         if store_feature:
             return c
         else:
             return c.squeeze(0).transpose(1, 0)
-    
-    
+
+
 class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
     """Discrete Multi Resolution Symbol HiFiGAN generator module with f0."""
-    
+
     def __init__(
         self,
         in_channels=512,
@@ -1596,7 +1634,9 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             use_fix_weight=use_fix_weight,
             use_f0=use_f0,
         )
-        
+
+        from parallel_wavegan.layers.conv_adapter import ConvAdapter
+
         self.use_multi_resolution = use_multi_resolution
         if use_multi_resolution is True:
             assert isinstance(add_rs, list), "add_rs is not a type of list."
@@ -1604,14 +1644,14 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             resolution.extend(add_rs)
             add_rs = sorted(add_rs)
             resolution = sorted(resolution)
-            
+
             if use_embedding_feats is True:
                 #########################################################################
-                #         Input: Single resolution continous embedding features         # 
+                #         Input: Single resolution continous embedding features         #
                 #########################################################################
                 self.src_rs = src_rs
                 self.add_rs = add_rs
-            
+
                 self.conv_encode = torch.nn.Conv1d(
                     in_channels,
                     in_channels,
@@ -1629,7 +1669,11 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
                             label_rate=[src_rs // gcd_rs, rs // gcd_rs],
                             dropout=rs_dropout,
                             channels=in_channels,
-                            activation=torch.nn.GELU() if rs_activation == "GELU" else torch.nn.ReLU(),
+                            activation=(
+                                torch.nn.GELU()
+                                if rs_activation == "GELU"
+                                else torch.nn.ReLU()
+                            ),
                         )
                     )
                     self.upsample.append(
@@ -1638,19 +1682,25 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
                             label_rate=[rs // gcd_rs, src_rs // gcd_rs],
                             dropout=rs_dropout,
                             channels=in_channels,
-                            activation=torch.nn.GELU() if rs_activation == "GELU" else torch.nn.ReLU(),
+                            activation=(
+                                torch.nn.GELU()
+                                if rs_activation == "GELU"
+                                else torch.nn.ReLU()
+                            ),
                         )
                     )
                     src_rs = rs
                 self.res_scl = math.sqrt(residual_scale)
             else:
                 ###########################################################
-                #         Input: Multi resolution discrete tokens         # 
+                #         Input: Multi resolution discrete tokens         #
                 ###########################################################
-                assert len(resolution) == layer_num, "layer_number is not equal to len(resolution)"      
+                assert (
+                    len(resolution) == layer_num
+                ), "layer_number is not equal to len(resolution)"
                 self.resolution = resolution
                 tgt_rs = resolution[0]
-                
+
                 self.resample = torch.nn.ModuleList()
                 for rs in resolution:
                     gcd_rs = math.gcd(rs, tgt_rs)
@@ -1660,17 +1710,20 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
                             label_rate=[rs // gcd_rs, tgt_rs // gcd_rs],
                             dropout=rs_dropout,
                             channels=1,
-                            activation=torch.nn.GELU() if rs_activation == "GELU" else torch.nn.ReLU(),
+                            activation=(
+                                torch.nn.GELU()
+                                if rs_activation == "GELU"
+                                else torch.nn.ReLU()
+                            ),
                         )
                     )
             """ Parameters of ConvAdapter in multi resolution referred as 
                 https://github.com/facebookresearch/fairseq/blob/5aaabf69187c7c1e6913e53ed17a4c92f74b234c/fairseq/models/multires_hubert/multires_hubert.py#L934
             """
 
-    
     def forward(
-        self, 
-        c, 
+        self,
+        c,
         f0=None,
         store_feature=False,
     ):
@@ -1685,9 +1738,9 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             Tensor: Output tensor (B, out_channels, T').
         """
         if self.use_multi_resolution and not self.use_embedding_feats:
-        ###########################################################
-        #         Input: Multi resolution discrete tokens         # 
-        ###########################################################
+            ###########################################################
+            #         Input: Multi resolution discrete tokens         #
+            ###########################################################
             c_list = []
             for rs, resample in zip(self.resolution, self.resample):
                 feat = c[rs].transpose(1, 2)
@@ -1697,7 +1750,7 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             minlen = min(c.shape[1] for c in c_list)
             c_list = [c[:, :minlen] for c in c_list]
             c = torch.cat(c_list, dim=2).transpose(1, 2)
-            
+
         # convert idx to embedding
         if self.num_spk_embs > 0:
             assert c.size(1) == 2
@@ -1711,14 +1764,14 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             else:
                 g = g.unsqueeze(1).expand(-1, c.size(1), -1)
                 c = torch.cat([c, g], dim=-1)
-                
+
         if self.use_weight_sum:
-        # weighted sum for multi layer continuous features / discrete tokens
-            assert c.size(1) == self.layer_num # (B, L, T) or (B, L, T, C)
+            # weighted sum for multi layer continuous features / discrete tokens
+            assert c.size(1) == self.layer_num  # (B, L, T) or (B, L, T, C)
             if not self.use_embedding_feats:
                 embedded = []
                 for i, embedding_layer in enumerate(self.emb):
-                # Apply the i-th embedding layer to the i-th layer of input
+                    # Apply the i-th embedding layer to the i-th layer of input
                     embedded.append(embedding_layer(c[:, i].long()))
                 c = torch.stack(embedded, dim=1).transpose(-1, 1)
             else:
@@ -1727,17 +1780,17 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             if self.use_fix_weight:
                 norm_weights = self.weights
             else:
-                norm_weights = F.softmax(self.weights, dim=-1) 
+                norm_weights = F.softmax(self.weights, dim=-1)
             # logging.info(f'norm_weights({norm_weights.shape}): {norm_weights}')
-            c = torch.matmul(c, norm_weights) # c: (B, C, T, L) * (L,) -> (B, C, T)
+            c = torch.matmul(c, norm_weights)  # c: (B, C, T, L) * (L,) -> (B, C, T)
         elif self.use_embedding_feats is False and self.use_weight_sum is False:
             assert c.size(1) == 1
             c = self.emb(c.squeeze(1).long()).transpose(1, 2)  # (B, C, T)
-        
+
         if self.use_multi_resolution and self.use_embedding_feats:
-        #########################################################################
-        #         Input: Single resolution continous embedding features         # 
-        #########################################################################
+            #########################################################################
+            #         Input: Single resolution continous embedding features         #
+            #########################################################################
             # input c as (B, C, T)
             c = self.conv_encode(c)
             x = c.transpose(-1, -2)
@@ -1746,36 +1799,36 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             for i, down_conv in enumerate(self.downsample):
                 residual.append(x)
                 x = down_conv(x)[0]
-                            
+
             gen_rs = self.add_rs[::-1]
             gen_rs.append(self.src_rs)
             store_dict = {}
             store_dict[gen_rs[0]] = x
-            
+
             for i, up_conv in enumerate(self.upsample, start=1):
                 residual_feat = residual[len(residual) - i]
                 up_x = up_conv(x)[0]
-                
+
                 # align origin feats and resmpale feats
                 if up_x.shape[1] != residual_feat.shape[1]:
                     minlen = min(up_x.shape[1], residual_feat.shape[1])
-                    up_x = up_x[:, : minlen]
-                    residual_feat = residual_feat[:, : minlen]
-                    
+                    up_x = up_x[:, :minlen]
+                    residual_feat = residual_feat[:, :minlen]
+
                 x = (up_x + residual_feat) * self.res_scl
                 store_dict[gen_rs[i]] = x
 
             if store_feature:
                 return store_dict
-            
+
             c = x.transpose(-1, -2)
 
         # Follows are Unit HiFiGAN part
-        
+
         if f0 is not None and self.use_f0:
             f0 = self.f0_embedding(f0.transpose(1, 2)).transpose(1, 2)
             c = torch.cat((c, f0), dim=1)
-        
+
         # c should input as (B, C, T)
         c = self.input_conv(c)
         for i in range(self.num_upsamples):
@@ -1786,15 +1839,17 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             c = cs / self.num_blocks
         c = self.output_conv(c)
         return c
-    
-    def inference(self, c, f0=None, g=None, normalize_before=False, store_feature=False):
+
+    def inference(
+        self, c, f0=None, g=None, normalize_before=False, store_feature=False
+    ):
         """Perform inference.
 
         Args:
             c (Union[Tensor, ndarray]): Input tensor token: (T, 2) or (T, 1) or (T, L).
                                         embedding feature: (T, L, C)
             f0 (Tensor): Input f0 (T,).
-            store_feature (bool): Whether to store intermediate token 
+            store_feature (bool): Whether to store intermediate token
         Returns:
             Tensor: Output tensor (T ** prod(upsample_scales), out_channels).
 
@@ -1805,20 +1860,20 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
         if g is not None:
             c = c[:, 0:1]
             c = torch.cat([c, c.new_zeros(*c.size()).fill_(g).to(c.device)], dim=1)
-            
+
         if self.use_f0 and f0 is not None:
             f0 = f0.unsqueeze(0).unsqueeze(0)
-            
+
         if not self.use_embedding_feats:
             if self.use_multi_resolution:
                 for rs in self.resolution:
                     c[rs] = c[rs].to(torch.float).unsqueeze(0).transpose(1, 2)
             elif self.num_spk_embs <= 0 and not self.use_weight_sum:
                 c = c[:, 0:1]
-        
+
         if not (not self.use_embedding_feats and self.use_multi_resolution):
             c = c.unsqueeze(0).transpose(1, 2)
-        
+
         c = self.forward(c, f0, store_feature)
         if store_feature:
             return c

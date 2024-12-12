@@ -9,8 +9,8 @@
 . ./path.sh || exit 1;
 
 
-if [ $# -ne 3 ]; then
-    echo "Usage: $0 <src_dir> <num_split> <dst_dir>"
+if [ $# -lt 3 ]; then
+    echo "Usage: $0 <src_dir> <num_split> <dst_dir> [<extra_files> ...]"
     echo "e.g.: $0 data/train_nodev 16 data/train_nodev/split16"
     exit 1
 fi
@@ -20,6 +20,7 @@ set -eu
 src_dir=$1
 num_split=$2
 dst_dir=$3
+extra_files=${@:4}
 
 src_scp=${src_dir}/wav.scp
 num_src_utts=$(wc -l < "${src_scp}")
@@ -72,5 +73,15 @@ if ${has_utt2spk}; then
     done
     # shellcheck disable=SC2086
     utils/split_scp.pl "${src_utt2spk}" ${split_utt2spks}
+fi
+if [ ! -z "${extra_files}" ]; then
+    for extra_file in ${extra_files}; do
+        split_extra_files=""
+        for i in $(seq 1 "${num_split}"); do
+            split_extra_files+=" ${dst_dir}/$(basename "${extra_file}" .scp).${i}.scp"
+        done
+        # shellcheck disable=SC2086
+        utils/split_scp.pl "${extra_file}" ${split_extra_files}
+    done
 fi
 echo "Successfully make subsets."

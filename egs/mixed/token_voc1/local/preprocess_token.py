@@ -18,6 +18,7 @@ import yaml
 import torch
 from tqdm import tqdm
 from scipy.interpolate import interp1d
+import kaldiio
 
 from parallel_wavegan.datasets import AudioDataset, AudioSCPDataset
 from parallel_wavegan.utils import write_hdf5
@@ -190,6 +191,12 @@ def main():
         default="facebook/hubert-base-ls960",
         help="pretrained model for embedding feature",
     )
+    parser.add_argument(
+        "--spk-embed-scp",
+        type=str,
+        default=None,
+        help="kaldi-style speaker embedding scp file.",
+    )
     args = parser.parse_args()
 
     # set logger
@@ -209,6 +216,8 @@ def main():
             format="%(asctime)s (%(module)s:%(lineno)d) %(levelname)s: %(message)s",
         )
         logging.warning("Skip DEBUG/INFO messages")
+
+    logging.info(f"Arguments: {args}")
 
     # load config
     with open(args.config) as f:
@@ -265,6 +274,8 @@ def main():
         with open(args.spk2idx) as f:
             lines = [l.replace("\n", "") for l in f.readlines()]
         spk2idx = {l.split()[0]: int(l.split()[1]) for l in lines}
+
+    spk_embed_loader = kaldiio.load_scp(args.spk_embed_scp) if args.spk_embed_scp is not None else None
 
     # check directly existence
     if not os.path.exists(args.dumpdir):
@@ -385,6 +396,13 @@ def main():
                     os.path.join(args.dumpdir, f"{utt_id}.h5"),
                     "f0",
                     f0.astype(np.float32),
+                )
+            if spk_embed_loader:
+                spk_embed = spk_embed_loader[utt_id]
+                write_hdf5(
+                    os.path.join(args.dumpdir, f"{utt_id}.h5"),
+                    "spemb",
+                    spk_embed.astype(np.float32),
                 )
                 
         elif config["format"] == "npy":

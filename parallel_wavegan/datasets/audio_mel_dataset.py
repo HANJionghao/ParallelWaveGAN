@@ -14,6 +14,7 @@ from torch.utils.data import Dataset
 
 from parallel_wavegan.utils import find_files, read_hdf5
 
+
 class AudioMRTokenlDataset(Dataset):
     """PyTorch compatible multi-resolution token (+global conditioning feature) dataset."""
 
@@ -86,7 +87,7 @@ class AudioMRTokenlDataset(Dataset):
         if mel_length_threshold is not None:
             src_rs = resolution[0]
             for rs in resolution:
-                logging.info(f'mel loadfn as: feats-{rs}')
+                logging.info(f"mel loadfn as: feats-{rs}")
                 mel_load_fn = lambda x: read_hdf5(x, f"feats-{rs}")
                 mel_lengths = [mel_load_fn(f).shape[0] for f in mel_files]
                 idxs = [
@@ -105,7 +106,7 @@ class AudioMRTokenlDataset(Dataset):
                 if self.use_global:
                     global_files = [global_files[idx] for idx in idxs]
 
-        # assert the number of files        
+        # assert the number of files
         assert len(audio_files) != 0, f"Not found any audio files in ${root_dir}."
         assert len(audio_files) == len(mel_files), (
             f"Number of audio and mel files are different ({len(audio_files)} vs"
@@ -172,7 +173,7 @@ class AudioMRTokenlDataset(Dataset):
         for rs in self.resolution:
             mel_load_fn = lambda x: read_hdf5(x, f"feats-{rs}")
             mel[rs] = mel_load_fn(self.mel_files[idx])
-        
+
         items = (audio, mel)
 
         if self.use_local:
@@ -199,6 +200,7 @@ class AudioMRTokenlDataset(Dataset):
 
         """
         return len(self.mel_files)
+
 
 class AudioMelDataset(Dataset):
     """PyTorch compatible audio and mel (+global conditioning feature) dataset."""
@@ -376,6 +378,7 @@ class AudioMelDataset(Dataset):
         """
         return len(self.audio_files)
 
+
 class AudioMelF0Dataset(Dataset):
     """PyTorch compatible audio and mel dataset."""
 
@@ -391,6 +394,7 @@ class AudioMelF0Dataset(Dataset):
         audio_length_threshold=None,
         mel_length_threshold=None,
         return_utt_id=False,
+        additional_feature_query_load_fn=None,
         allow_cache=False,
     ):
         """Initialize dataset.
@@ -415,6 +419,14 @@ class AudioMelF0Dataset(Dataset):
         audio_files = sorted(find_files(root_dir, audio_query))
         mel_files = sorted(find_files(root_dir, mel_query))
         f0_files = sorted(find_files(root_dir, f0_query))
+        additional_features = (
+            {
+                key: (sorted(find_files(root_dir, query)), load_fn)
+                for key, (query, load_fn) in additional_feature_query_load_fn.items()
+            }
+            if additional_feature_query_load_fn is not None
+            else {}
+        )
 
         # filter by threshold
         if audio_length_threshold is not None:
@@ -432,6 +444,10 @@ class AudioMelF0Dataset(Dataset):
             audio_files = [audio_files[idx] for idx in idxs]
             mel_files = [mel_files[idx] for idx in idxs]
             f0_files = [f0_files[idx] for idx in idxs]
+            for key in additional_features.keys():
+                additional_features[key] = [
+                    additional_features[key][0][idx] for idx in idxs
+                ]
         if mel_length_threshold is not None:
             mel_lengths = [mel_load_fn(f).shape[0] for f in mel_files]
             idxs = [
@@ -447,6 +463,10 @@ class AudioMelF0Dataset(Dataset):
             audio_files = [audio_files[idx] for idx in idxs]
             mel_files = [mel_files[idx] for idx in idxs]
             f0_files = [f0_files[idx] for idx in idxs]
+            for key in additional_features.keys():
+                additional_features[key] = [
+                    additional_features[key][0][idx] for idx in idxs
+                ]
 
         # assert the number of files
         assert len(audio_files) != 0, f"Not found any audio files in ${root_dir}."
@@ -458,6 +478,13 @@ class AudioMelF0Dataset(Dataset):
             f"Number of audio and f0 files are different ({len(audio_files)} vs"
             f" {len(f0_files)})."
         )
+        for key in additional_features.keys():
+            audio_files_len = len(audio_files)
+            additional_features_len = len(additional_features[key][0])
+            assert audio_files_len == additional_features_len, (
+                f"Number of audio and {key} files are different ({audio_files_len} vs"
+                f" {additional_features_len})."
+            )
 
         self.audio_files = audio_files
         self.audio_load_fn = audio_load_fn
@@ -465,6 +492,7 @@ class AudioMelF0Dataset(Dataset):
         self.mel_load_fn = mel_load_fn
         self.f0_files = f0_files
         self.f0_load_fn = f0_load_fn
+        self.additional_features = additional_features
         if ".npy" in audio_query:
             self.utt_ids = [
                 os.path.basename(f).replace("-wave.npy", "") for f in audio_files
@@ -503,11 +531,15 @@ class AudioMelF0Dataset(Dataset):
         audio = self.audio_load_fn(self.audio_files[idx])
         mel = self.mel_load_fn(self.mel_files[idx])
         f0 = self.f0_load_fn(self.f0_files[idx])
+        additional_features = {
+            key: load_fn(files[idx])
+            for key, (files, load_fn) in self.additional_features.items()
+        }
 
         if self.return_utt_id:
-            items = utt_id, audio, mel, f0
+            items = utt_id, audio, mel, f0, additional_features
         else:
-            items = audio, mel, f0
+            items = audio, mel, f0, additional_features
         if self.allow_cache:
             self.caches[idx] = items
         return items
@@ -1006,7 +1038,7 @@ class MRTokenDataset(Dataset):
         mel_files = sorted(find_files(root_dir, mel_query))
         resolution = resolution_load_fn(find_files(root_dir, resolution_query)[0])
         src_rs = resolution[0]
-        
+
         self.use_local = local_query is not None
         self.use_global = global_query is not None
         if self.use_local:
@@ -1017,7 +1049,7 @@ class MRTokenDataset(Dataset):
         # filter by threshold
         if mel_length_threshold is not None:
             for rs in resolution:
-                logging.info(f'mel loadfn as: feats-{rs}')
+                logging.info(f"mel loadfn as: feats-{rs}")
                 mel_load_fn = lambda x: read_hdf5(x, f"feats-{rs}")
                 mel_lengths = [mel_load_fn(f).shape[0] for f in mel_files]
                 idxs = [
@@ -1048,7 +1080,7 @@ class MRTokenDataset(Dataset):
                 f" {len(global_files)})."
             )
 
-        self.resolution=resolution
+        self.resolution = resolution
         self.mel_files = mel_files
         if self.use_local:
             self.local_files = local_files
@@ -1254,6 +1286,7 @@ class MelF0Dataset(Dataset):
         f0_load_fn=np.load,
         return_utt_id=False,
         allow_cache=False,
+        additional_feature_query_load_fn=None,
     ):
         """Initialize dataset.
 
@@ -1269,6 +1302,14 @@ class MelF0Dataset(Dataset):
         # find all of the mel files
         mel_files = sorted(find_files(root_dir, mel_query))
         f0_files = sorted(find_files(root_dir, f0_query))
+        additional_features = (
+            {
+                key: (sorted(find_files(root_dir, query)), load_fn)
+                for key, (query, load_fn) in additional_feature_query_load_fn.items()
+            }
+            if additional_feature_query_load_fn is not None
+            else {}
+        )
 
         # filter by threshold
         if mel_length_threshold is not None:
@@ -1285,15 +1326,24 @@ class MelF0Dataset(Dataset):
                 )
             mel_files = [mel_files[idx] for idx in idxs]
             f0_files = [f0_files[idx] for idx in idxs]
+            for key in additional_features.keys():
+                additional_features[key] = [
+                    additional_features[key][0][idx] for idx in idxs
+                ]
 
         # assert the number of files
         assert len(mel_files) != 0, f"Not found any mel files in ${root_dir}."
         assert len(f0_files) != 0, f"Not found any f0 files in ${root_dir}."
+        for key in additional_features.keys():
+            assert (
+                len(additional_features[key][0]) != 0
+            ), f"Not found any {key} files in ${root_dir}."
 
         self.mel_files = mel_files
         self.mel_load_fn = mel_load_fn
         self.f0_files = f0_files
         self.f0_load_fn = f0_load_fn
+        self.additional_features = additional_features
 
         self.utt_ids = [os.path.splitext(os.path.basename(f))[0] for f in mel_files]
         if ".npy" in mel_query:
@@ -1327,11 +1377,15 @@ class MelF0Dataset(Dataset):
         utt_id = self.utt_ids[idx]
         mel = self.mel_load_fn(self.mel_files[idx])
         f0 = self.f0_load_fn(self.f0_files[idx])
+        additional_features = {
+            key: load_fn(files[idx])
+            for key, (files, load_fn) in self.additional_features.items()
+        }
 
         if self.return_utt_id:
-            items = utt_id, mel, f0
+            items = utt_id, mel, f0, additional_features
         else:
-            items = mel, f0
+            items = mel, f0, additional_features
 
         if self.allow_cache:
             self.caches[idx] = items

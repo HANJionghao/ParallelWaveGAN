@@ -48,7 +48,9 @@ generator_params:
     use_weight_norm: true                 # Whether to apply weight normalization.
     num_spk_embs: 0                       # Do not consider speaker embedding for single spk
     
-    use_embedding_feats: false            # Whether to use embedding feature of models
+    use_spk_embed: true                   # Whether to use speaker embedding.
+    spk_emb_dim: 192                      # Speaker embedding dimension.
+    concat_spk_emb: true                 # Whether to concatenate speaker embedding with the input.
     use_weight_sum: true                  # Whether to apply weight sum
     layer_num: 3                          # Number of layers used
     use_fix_weight: false                 # Whether to fix parameter of weight sum (for Residual cluster layer)
