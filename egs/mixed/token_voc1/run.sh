@@ -11,7 +11,7 @@ stage=-1       # stage to start
 stop_stage=100 # stage to stop
 verbose=1      # verbosity level (lower is less info)
 n_gpus=1       # number of gpus in training
-n_jobs=8      # number of parallel jobs in feature extraction
+n_jobs=8       # number of parallel jobs in feature extraction
 
 # NOTE(kan-bayashi): renamed to conf to avoid conflict in parse_options.sh
 conf=conf/hifigan_token_16k_nodp_f0.v1.yaml
@@ -42,12 +42,17 @@ dev_set="dev"           # name of development data direcotry
 eval_set="test"         # name of evaluation data direcotry
 
 token_text=""
-use_f0=true                    # whether to add f0 
-use_embedding_feats=false      # whether to use pretrain feature as input
-use_spk_embed=false            # whether to use speaker embedding
-spk_embed_scp_tag="espnet_spk"  # scp file for pre-extracted speaker embeddings
-pretrained_model="facebook/hubert-base-ls960"      # pre-trained model (confirm it on Huggingface)
-emb_layer=6
+multi_token_files=""    # list of multi token (only used in multi token pattern)
+# multi_token_mix_type="sequence" # ["sequence", "frame"], mix type of multi token
+
+use_f0=true                                   # whether to add f0
+use_embedding_feats=false                     # whether to use pretrain feature as input
+use_spk_embed=false                           # whether to use speaker embedding
+spk_embed_scp_tag="espnet_spk"                # scp file for pre-extracted speaker embeddings
+pretrained_model="facebook/hubert-base-ls960" # pre-trained model (confirm it on Huggingface)
+use_multi_layer=false          # Whether to use multi layer
+feat_layer=3                    # Number of total layers for multi layer, specific layer for single layer.
+
 fs=16000
 subexp="exp"
 
@@ -63,14 +68,14 @@ if [ "${stage}" -le 0 ] && [ "${stop_stage}" -ge 0 ]; then
     echo "Stage 0: Data preparation"
     if [ ! -e "${db_root}" ]; then
         echo "ERROR: Opencpop data does not exist."
-    	echo "ERROR: Please download https://wenet.org.cn/opencpop/download/ and locate it at ${download_dir}"
-    	exit 1
+        echo "ERROR: Please download https://wenet.org.cn/opencpop/download/ and locate it at ${download_dir}"
+        exit 1
     fi
     echo "Please make sure fs=${fs} is right sample rate for model."
     mkdir -p wav_dump
     python local/data_prep.py ${db_root} \
         --wav_dumpdir wav_dump \
-        --sr ${fs} \
+        --sr ${fs}
 
     sort -o data/train/wav.scp data/train/wav.scp
 
@@ -92,7 +97,7 @@ fi
 if [ "${stage}" -le 1 ] && [ "${stop_stage}" -ge 1 ]; then
     echo "Stage 1: Feature extraction"
     if [ ! -e "${token_text}" ]; then
-        echo "Valid --token_text is not provided. Please prepare it by yourself."        
+        echo "Valid --token_text is not provided. Please prepare it by yourself."
         echo "--token_text have 2 kinds of input: path of token_text file / path of token files directory."
         cat << EOF
 ---------------------------------
@@ -118,24 +123,34 @@ EOF
         [ ! -e "${dumpdir}/${name}/raw" ] && mkdir -p "${dumpdir}/${name}/raw"
         echo "Feature extraction start. See the progress via ${dumpdir}/${name}/raw/preprocessing.*.log."
         extra_files=
-        if [ ${use_spk_embed} == true ]; then
+        if [ "${use_spk_embed}" = true ]; then
             extra_files+="data/${name}/${spk_embed_scp_tag}.scp "
         fi
         utils/make_subset_data.sh "data/${name}" "${n_jobs}" "${dumpdir}/${name}/raw" "${extra_files}"
 
         _opts=
-        if [ ${use_f0} == true ]; then
+        if [ "${use_f0}" = true ]; then
             _opts+="--use-f0 "
         fi
-        if [ ${use_embedding_feats} == "true" ]; then
+        if [ "${use_multi_layer}" = true ]; then
+            _opts+="--use-multi-layer "
+            _opts+="--feat-layer ${feat_layer} "
+            _opts+="--multi-token-files \"${multi_token_files}\" "
+            # _opts+="--multi-token-mix-type ${multi_token_mix_type} "
+        fi
+        if [ "${use_embedding_feats}" = true ]; then
             _opts+="--use-embedding-feats "
             _opts+="--pretrained-model ${pretrained_model} "
-            _opts+="--emb-layer ${emb_layer} "
+            _opts+="--feat-layer ${feat_layer} "
         fi
-        if [ ${use_spk_embed} == true ]; then
+        if [ "${use_multi_resolution_token}" = true ]; then
+            _opts+="--use-multi-resolution-token "
+        fi
+        if [ "${use_spk_embed}" = true ]; then
             _opts+="--spk-embed-scp ${dumpdir}/${name}/raw/${spk_embed_scp_tag}.JOB.scp "
         fi
 
+        # preprocess embedding feature instead of token
         ${train_cmd} JOB=1:${n_jobs} "${dumpdir}/${name}/raw/preprocessing.JOB.log" \
             local/preprocess_token.py \
                 --config "${conf}" \
@@ -167,10 +182,13 @@ if [ "${stage}" -le 2 ] && [ "${stop_stage}" -ge 2 ]; then
         train="parallel-wavegan-train"
     fi
     _opts=
-    if [ ${use_f0} == true ]; then
+    if [ "${use_f0}" = true ]; then
         _opts+="--use-f0 "
     fi
-    if [ ${use_spk_embed} == true ]; then
+    if [ "${use_multi_resolution_token}" = true ]; then
+        _opts+="--use-multi-resolution-token "
+    fi
+    if [ "${use_spk_embed}" = true ]; then
         _opts+="--additional-feature-keys spemb "
     fi
     # shellcheck disable=SC2012
@@ -201,10 +219,13 @@ if [ "${stage}" -le 3 ] && [ "${stop_stage}" -ge 3 ]; then
         [ "${n_gpus}" -gt 1 ] && n_gpus=1
         echo "Decoding start. See the progress via ${outdir}/${name}/decode.log."
         _opts=
-        if [ ${use_f0} == true ]; then
+        if [ "${use_f0}" = true ]; then
             _opts+="--use-f0 "
         fi
-        if [ ${use_spk_embed} == true ]; then
+        if [ "${use_multi_resolution_token}" = true ]; then
+            _opts+="--use-multi-resolution-token "
+        fi
+        if [ "${use_spk_embed}" = true ]; then
             _opts+="--additional-feature-keys spemb "
         fi
         ${cuda_cmd} --gpu "${n_gpus}" "${outdir}/${name}/decode.log" \
@@ -235,37 +256,37 @@ if [ "${stage}" -le 4 ] && [ "${stop_stage}" -ge 4 ]; then
         echo "Begin Scoring for MCD metrics on ${dset}, results are written under ${_dir}/MCD_res"
 
         mkdir -p "${_dir}/MCD_res"
-        python utils/evaluate_mcd.py \
-            ${_gen_wavdir} \
-            ${_gt_wavscp} \
+        python utils/py_utils/evaluate_mcd.py \
+            "${_gen_wavdir}" \
+            "${_gt_wavscp}" \
             --outdir "${_dir}/MCD_res"
 
         # Objective Evaluation - log-F0 RMSE
         echo "Begin Scoring for F0 related metrics on ${dset}, results are written under ${_dir}/F0_res"
 
         mkdir -p "${_dir}/F0_res"
-        python utils/evaluate_f0.py \
-            ${_gen_wavdir} \
-            ${_gt_wavscp} \
+        python utils/py_utils/evaluate_f0.py \
+            "${_gen_wavdir}" \
+            "${_gt_wavscp}" \
             --outdir "${_dir}/F0_res"
 
-        # # Objective Evaluation - semitone ACC
-        # echo "Begin Scoring for SEMITONE related metrics on ${dset}, results are written under ${_dir}/SEMITONE_res"
+        # Objective Evaluation - semitone ACC
+        echo "Begin Scoring for SEMITONE related metrics on ${dset}, results are written under ${_dir}/SEMITONE_res"
 
-        # mkdir -p "${_dir}/SEMITONE_res"
-        # python utils/evaluate_semitone.py \
-        #     ${_gen_wavdir} \
-        #     ${_gt_wavscp} \
-        #     --outdir "${_dir}/SEMITONE_res"
+        mkdir -p "${_dir}/SEMITONE_res"
+        python utils/py_utils/evaluate_semitone.py \
+            "${_gen_wavdir}" \
+            "${_gt_wavscp}" \
+            --outdir "${_dir}/SEMITONE_res"
 
-        #     # Objective Evaluation - VUV error
-        # echo "Begin Scoring for VUV related metrics on ${dset}, results are written under ${_dir}/VUV_res"
+        # Objective Evaluation - VUV error
+        echo "Begin Scoring for VUV related metrics on ${dset}, results are written under ${_dir}/VUV_res"
 
-        # mkdir -p "${_dir}/VUV_res"
-        # python utils/evaluate_vuv.py \
-        #     ${_gen_wavdir} \
-        #     ${_gt_wavscp} \
-        #     --outdir "${_dir}/VUV_res"
+        mkdir -p "${_dir}/VUV_res"
+        python utils/py_utils/evaluate_vuv.py \
+            "${_gen_wavdir}" \
+            "${_gt_wavscp}" \
+            --outdir "${_dir}/VUV_res"
 
     done
 else
