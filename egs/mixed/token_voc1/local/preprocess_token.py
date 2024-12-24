@@ -277,19 +277,11 @@ def main():
 
     if args.use_embedding_feats is False:
         # get token single layer / multi layer
-        logging.info(f"path: {args.text}")
-        if not os.path.isdir(args.text):  # single layer token file
-            with open(args.text) as f:
-                lines = [line.strip() for line in f.readlines()]
-            text = {
-                line.split(maxsplit=1)[0]: line.split(maxsplit=1)[1].split()
-                for line in lines
-            }
-        else:  # multi-stream: directory of token files
+        if args.multi_token_files:  # multi-stream: directory of token files
+            logging.info(f"Use multi token files: {args.multi_token_files}")
             text = {}
-            token_files = args.multi_token_files.split(" ")
-            for fname in token_files:
-                fpath = os.path.join(args.text, fname)
+            token_files = args.multi_token_files.strip().split(" ")
+            for fpath in token_files:
                 if not os.path.exists(fpath):
                     raise FileExistsError(f"{fpath} does not exist.")
                 with open(fpath, "r", encoding="utf-8") as f:
@@ -300,6 +292,13 @@ def main():
                             text[utt_name] = []
                         # combine in sequence way, [T]
                         text[utt_name].append(tokens)
+        elif not os.path.isdir(args.text):  # single layer token file
+            with open(args.text) as f:
+                lines = [line.strip() for line in f.readlines()]
+            text = {
+                line.split(maxsplit=1)[0]: line.split(maxsplit=1)[1].split()
+                for line in lines
+            }
 
     # load spk2utt file
     if args.utt2spk is not None:
