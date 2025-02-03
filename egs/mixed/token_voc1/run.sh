@@ -26,6 +26,7 @@ db_root=/data3/tyx/dataset/opencpop # direcotry including wavfiles (MODIFY BY YO
                           # │   ...
                           # └── utt_N.wav
 dumpdir=dump           # directory to dump features
+datadir=data           # directory to save data
 
 # training related setting
 tag=""     # tag for directory to save model
@@ -77,21 +78,21 @@ if [ "${stage}" -le 0 ] && [ "${stop_stage}" -ge 0 ]; then
         --wav_dumpdir wav_dump \
         --sr ${fs}
 
-    sort -o data/train/wav.scp data/train/wav.scp
+    sort -o ${datadir}/train/wav.scp ${datadir}/train/wav.scp
 
     dev_num=50
-    train_num=$(( $(wc -l < data/train/wav.scp) - dev_num ))
+    train_num=$(( $(wc -l < ${datadir}/train/wav.scp) - dev_num ))
 
-    mkdir -p data/${dev_set}
-    head -n $train_num data/${train_set}/wav.scp > data/${train_set}/wav.scp.tmp
-    tail -n $dev_num data/${train_set}/wav.scp > data/${dev_set}/wav.scp.tmp
-    mv data/${dev_set}/wav.scp.tmp data/${dev_set}/wav.scp
-    mv data/${train_set}/wav.scp.tmp data/${train_set}/wav.scp
+    mkdir -p ${datadir}/${dev_set}
+    head -n $train_num ${datadir}/${train_set}/wav.scp > ${datadir}/${train_set}/wav.scp.tmp
+    tail -n $dev_num ${datadir}/${train_set}/wav.scp > ${datadir}/${dev_set}/wav.scp.tmp
+    mv ${datadir}/${dev_set}/wav.scp.tmp ${datadir}/${dev_set}/wav.scp
+    mv ${datadir}/${train_set}/wav.scp.tmp ${datadir}/${train_set}/wav.scp
     
-    head -n $train_num data/${train_set}/utt2spk > data/${train_set}/utt2spk.tmp
-    tail -n $dev_num data/${train_set}/utt2spk > data/${dev_set}/utt2spk.tmp
-    mv data/${dev_set}/utt2spk.tmp data/${dev_set}/utt2spk
-    mv data/${train_set}/utt2spk.tmp data/${train_set}/utt2spk
+    head -n $train_num ${datadir}/${train_set}/utt2spk > ${datadir}/${train_set}/utt2spk.tmp
+    tail -n $dev_num ${datadir}/${train_set}/utt2spk > ${datadir}/${dev_set}/utt2spk.tmp
+    mv ${datadir}/${dev_set}/utt2spk.tmp ${datadir}/${dev_set}/utt2spk
+    mv ${datadir}/${train_set}/utt2spk.tmp ${datadir}/${train_set}/utt2spk
 fi
 
 if [ "${stage}" -le 1 ] && [ "${stop_stage}" -ge 1 ]; then
@@ -124,9 +125,9 @@ EOF
         echo "Feature extraction start. See the progress via ${dumpdir}/${name}/raw/preprocessing.*.log."
         extra_files=
         if [ "${use_spk_embed}" = true ]; then
-            extra_files+="data/${name}/${spk_embed_scp_tag}.scp "
+            extra_files+="${datadir}/${name}/${spk_embed_scp_tag}.scp "
         fi
-        utils/make_subset_data.sh "data/${name}" "${n_jobs}" "${dumpdir}/${name}/raw" "${extra_files}"
+        utils/make_subset_data.sh "${datadir}/${name}" "${n_jobs}" "${dumpdir}/${name}/raw" "${extra_files}"
 
         _opts=
         if [ "${use_f0}" = true ]; then
@@ -247,7 +248,7 @@ if [ "${stage}" -le 4 ] && [ "${stop_stage}" -ge 4 ]; then
     echo "Stage 4: Scoring"
     [ -z "${checkpoint}" ] && checkpoint="$(ls -dt "${expdir}"/*.pkl | head -1 || true)"
     for dset in ${eval_set}; do
-        _data="data/${dset}"
+        _data="${datadir}/${dset}"
         _gt_wavscp="${_data}/wav.scp"
         _dir="${expdir}/wav/$(basename "${checkpoint}" .pkl)"
         _gen_wavdir="${_dir}/${dset}"
