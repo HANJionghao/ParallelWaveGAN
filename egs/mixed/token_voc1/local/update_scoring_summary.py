@@ -8,6 +8,7 @@ import yaml
 
 BLANK_VALUE = "-"
 EXPERIMENT_TAG_COLUMN = "Experiment"
+IGNORED_CONFIG_KEYS = ("outdir", "config")
 
 
 def get_parser():
@@ -29,7 +30,7 @@ def update_results(
     reference_config: Path,
     exp_tag="",
     result_tags: Optional[iter[str]] = None,
-    ignored_diffs=["outdir", "config"],
+    ignored_config_diffs=IGNORED_CONFIG_KEYS,
 ):
     # parse config
     exp_config_pd = read_and_flatten_config(exp_config)
@@ -38,7 +39,7 @@ def update_results(
     reference_config_pd = read_and_flatten_config(reference_config)
     reference_config_pd[EXPERIMENT_TAG_COLUMN] = ["Reference"] # temporary index to align columns
     reference_config_pd.set_index(EXPERIMENT_TAG_COLUMN, inplace=True)
-    exp_config_diff = get_config_differences(exp_config_pd, reference_config_pd, ignored_diffs)
+    exp_config_diff = get_config_differences(exp_config_pd, reference_config_pd, ignored_config_diffs)
     
     # add results
     if result_tags is None:
@@ -47,7 +48,7 @@ def update_results(
     exp_results_dict = {}
     for result_folder, result_tag in zip(result_folders, result_tags):
         # NOTE(jhan): The later results will overwrite the previous results if they have the same key.
-        exp_results_dict |= get_results(result_folder, result_tag=result_tag)
+        exp_results_dict.update(get_results(result_folder, result_tag=result_tag))
         
     exp_results_pd = pd.DataFrame(exp_results_dict, index=[exp_tag])
     exp_results_pd = exp_config_diff.join(exp_results_pd)
@@ -55,10 +56,9 @@ def update_results(
     if exp_tag in results_pd.index:
         # NOTE(jhan): Drop the previous results if they exist.
         results_pd.drop(exp_tag, inplace=True)
-    results_pd = combine_rows_with_default_pds((
-        (exp_results_pd, exp_config_pd), 
-        (results_pd, reference_config_pd)
-    ))
+    results_pd = combine_rows_with_default_pds(
+        ((exp_results_pd, exp_config_pd), (results_pd, reference_config_pd))
+    )
 
     results_pd.sort_index(inplace=True)
 
