@@ -1,3 +1,6 @@
+from __future__ import annotations
+
+from typing import Optional
 import argparse
 from pathlib import Path
 import pandas as pd
@@ -22,10 +25,10 @@ def get_parser():
 def update_results(
     results_pd: pd.DataFrame,
     exp_config: Path,
-    exp_results: Path,
+    exp_results: iter[Path],
     reference_config: Path,
     exp_tag="",
-    results_tag="",
+    result_tags: Optional[iter[str]] = None,
     ignored_diffs=["outdir", "config"],
 ):
     # parse config
@@ -38,20 +41,31 @@ def update_results(
     exp_config_diff = get_config_differences(exp_config_pd, reference_config_pd, ignored_diffs)
     
     # add results
-    exp_results_pd = pd.DataFrame(get_results(exp_results, result_tag=results_tag), index=[exp_tag])
+    if result_tags is None:
+        result_tags = [""] * len(exp_results)
+    
+    exp_results_dict = {}
+    for exp_result, result_tag in zip(exp_results, result_tags):
+        # NOTE(jhan): The later results will overwrite the previous results if they have the same key.
+        exp_results_dict |= get_results(exp_result, result_tag=result_tag)
+        
+    exp_results_pd = pd.DataFrame(exp_results_dict, index=[exp_tag])
     exp_results_pd = exp_config_diff.join(exp_results_pd)
 
     if exp_tag in results_pd.index:
-        # NOTE(jhan): Overwrite existing results for this experiment
-        results_pd.loc[exp_tag, exp_results_pd.columns] = exp_results_pd
-    results_pd = combine_rows_with_default_pds(exp_results_pd, results_pd, exp_config_pd, reference_config_pd)
+        # NOTE(jhan): Drop the previous results if they exist.
+        results_pd.drop(exp_tag, inplace=True)
+    results_pd = combine_rows_with_default_pds((
+        (exp_results_pd, exp_config_pd), 
+        (results_pd, reference_config_pd)
+    ))
 
     results_pd.sort_index(inplace=True)
 
     return results_pd
 
 
-def get_results(exp_results: Path, result_tag=""):
+def get_results(results_folder: Path, result_tag=""):
     """
     Extracts results from the experiment results directory.
 
@@ -63,12 +77,12 @@ def get_results(exp_results: Path, result_tag=""):
     dict: A dictionary with result keys and their corresponding values.
     """
     results = {}
-    for result_file in exp_results.glob("*_res/*_avg_result.txt"):
+    for result_file in results_folder.glob("*_res/*_avg_result.txt"):
         if result_file.is_file():
             with open(result_file, "r") as f:
                 f.readline()
                 result = f.readline().strip()[len("Average: "):]
-                results[result_tag + "_" + result_file.stem[:-len("_avg_result")]] = result
+                results[result_tag + "." + result_file.stem[:-len("_avg_result")]] = result
     return results
 
 
@@ -86,18 +100,12 @@ def read_and_flatten_config(config_path: Path):
     return pd.json_normalize(config)
 
 
-def combine_rows_with_default_pds(df1, df2, df1_default, df2_default):
-    combined_df = pd.concat([df1, df2])
-    df1_missing_cols = df2.columns.difference(df1.columns)
-    for col in df1_missing_cols:
-        if col in df2_default.columns:
-            combined_df.loc[df1.index, col] = df2_default[col].iloc[0]
-
-    df2_missing_cols = df1.columns.difference(df2.columns)
-    for col in df2_missing_cols:
-        if col in df1_default.columns:
-            combined_df.loc[df2.index, col] = df1_default[col].iloc[0]
-    
+def combine_rows_with_default_pds(pds):
+    combined_df = pd.concat(next(zip(*pds)))
+    for df, default in pds:
+        missing_cols = combined_df.columns.difference(df.columns)
+        missing_cols_with_default = missing_cols.intersection(default.columns)
+        combined_df.loc[df.index, missing_cols_with_default] = default.loc[df.index, missing_cols_with_default]
     return combined_df
 
 
@@ -116,15 +124,15 @@ def main(args):
                     f"Reference experiment config in results CSV ({outfile_ref_exp_conf}) does not match provided reference config ({args.ref_exp_conf})."
                 )
             results_pd = pd.read_csv(f, index_col=EXPERIMENT_TAG_COLUMN)
-    for exp_results in (args.exp_path / "wav").iterdir():
-        results_pd = update_results(
-            results_pd,
-            args.exp_path / "config.yml",
-            exp_results,
-            args.ref_exp_conf,
-            exp_tag=args.exp_path.stem,
-            results_tag=exp_results.stem,
-        )
+    exp_results = list((args.exp_path / "wav").iterdir())
+    results_pd = update_results(
+        results_pd,
+        args.exp_path / "config.yml",
+        exp_results,
+        args.ref_exp_conf,
+        exp_tag=args.exp_path.stem,
+        result_tags=[result_path.stem for result_path in exp_results],
+    )
 
     with open(args.results_csv, "w") as f:
         f.write(f"[Reference Experiment Config]{args.ref_exp_conf}\n")
