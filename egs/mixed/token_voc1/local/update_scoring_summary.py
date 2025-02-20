@@ -4,6 +4,7 @@ import pandas as pd
 import yaml
 
 BLANK_VALUE = "-"
+EXPERIMENT_TAG_COLUMN = "Experiment"
 
 
 def get_parser():
@@ -25,42 +26,27 @@ def update_results(
     reference_config: Path,
     exp_tag="",
     results_tag="",
-    ignore_diffs=["outdir", "config"],
+    ignored_diffs=["outdir", "config"],
 ):
-    # add config
+    # parse config
     exp_config_pd = read_and_flatten_config(exp_config)
+    exp_config_pd[EXPERIMENT_TAG_COLUMN] = [exp_tag]
+    exp_config_pd.set_index(EXPERIMENT_TAG_COLUMN, inplace=True)
     reference_config_pd = read_and_flatten_config(reference_config)
-    exp_config_diff = calculate_config_diff(exp_config_pd, reference_config_pd, ignore_diffs)
-    exp_config_diff.index = [exp_tag]
-
-    # if "config" in exp_config_diff.columns:
-    #     exp_base_config = Path(exp_config_diff["config"].iloc[0])
-    #     reference_base_config = Path(reference_config_pd["config"].iloc[0])
-    #     exp_base_config_pd = read_and_flatten_config(exp_base_config)
-    #     reference_base_config_pd = read_and_flatten_config(reference_base_config)
-    #     exp_base_config_diff = calculate_config_diff(
-    #         exp_base_config_pd, reference_base_config_pd
-    #     )
-    #     exp_base_config_diff.index = [exp_tag]
-    #     exp_config_diff = exp_config_diff.merge(exp_base_config_diff, how="left")
-    
-    align_columns_with_defaultpd(exp_config_diff, results_pd, reference_config_pd)
-    align_columns_with_defaultpd(results_pd, exp_config_diff, exp_config_pd)
+    reference_config_pd[EXPERIMENT_TAG_COLUMN] = ["Reference"] # temporary index to align columns
+    reference_config_pd.set_index(EXPERIMENT_TAG_COLUMN, inplace=True)
+    exp_config_diff = get_config_differences(exp_config_pd, reference_config_pd, ignored_diffs)
     
     # add results
     exp_results_pd = pd.DataFrame(get_results(exp_results, result_tag=results_tag), index=[exp_tag])
-    exp_results_pd.sort_index(axis=1, inplace=True)
-    # align_columns_with_default(exp_results_pd, results_pd, None)
-    # align_columns_with_default(results_pd, exp_results_pd, None)
     exp_results_pd = exp_config_diff.join(exp_results_pd)
 
-    # if results_tag in results_pd's index, update the row, else add a new row
     if exp_tag in results_pd.index:
-        results_pd.loc[exp_tag] = exp_results_pd.loc[exp_tag]
-    else:
-        results_pd = pd.concat([results_pd, exp_config_diff])
-        results_pd = pd.concat([results_pd, exp_results_pd])
-    results_pd.fillna(BLANK_VALUE, inplace=True)
+        # NOTE(jhan): Overwrite existing results for this experiment
+        results_pd.loc[exp_tag, exp_results_pd.columns] = exp_results_pd
+    results_pd = combine_rows_with_default_pds(exp_results_pd, results_pd, exp_config_pd, reference_config_pd)
+
+    results_pd.sort_index(inplace=True)
 
     return results_pd
 
@@ -77,24 +63,20 @@ def get_results(exp_results: Path, result_tag=""):
     dict: A dictionary with result keys and their corresponding values.
     """
     results = {}
-    for result_folder in exp_results.glob("*_res"):
-        if result_folder.is_dir():
-            for result_file in result_folder.glob("*_avg_result.txt"):
-                if result_file.is_file():
-                    with open(result_file, "r") as f:
-                        f.readline()
-                        result = f.readline().strip()[len("Average: "):]
-                        results[result_tag + "_" + result_file.stem[:-len("_avg_result")]] = result
+    for result_file in exp_results.glob("*_res/*_avg_result.txt"):
+        if result_file.is_file():
+            with open(result_file, "r") as f:
+                f.readline()
+                result = f.readline().strip()[len("Average: "):]
+                results[result_tag + "_" + result_file.stem[:-len("_avg_result")]] = result
     return results
 
 
-def calculate_config_diff(exp_config_pd, reference_config_pd, ignore_diffs):
-    align_columns(exp_config_pd, reference_config_pd)
-    exp_config_pd.sort_index(axis=1, inplace=True)
-    reference_config_pd.sort_index(axis=1, inplace=True)
-    diff = exp_config_pd.compare(reference_config_pd)
-    exp_config_diff = diff.xs("self", level=1, axis=1)
-    exp_config_diff = exp_config_diff.drop(ignore_diffs, axis=1, errors="ignore")
+def get_config_differences(exp_config_pd, reference_config_pd, ignored_diffs):
+    combined_df = pd.concat([exp_config_pd, reference_config_pd])
+    diff = combined_df.iloc[0].ne(combined_df.iloc[1])
+    exp_config_diff = combined_df.loc[exp_config_pd.index, diff]
+    exp_config_diff = exp_config_diff.drop(ignored_diffs, axis=1, errors="ignore")
     return exp_config_diff
 
 
@@ -104,40 +86,38 @@ def read_and_flatten_config(config_path: Path):
     return pd.json_normalize(config)
 
 
-def align_columns(df1, df2):
-    for col in df1.columns:
-        if col not in df2.columns:
-            df2[col] = None
-    for col in df2.columns:
-        if col not in df1.columns:
-            df1[col] = None
+def combine_rows_with_default_pds(df1, df2, df1_default, df2_default):
+    combined_df = pd.concat([df1, df2])
+    df1_missing_cols = df2.columns.difference(df1.columns)
+    for col in df1_missing_cols:
+        if col in df2_default.columns:
+            combined_df.loc[df1.index, col] = df2_default[col].iloc[0]
 
-def align_columns_with_defaultpd(df1, df2, default_df):
-    if df2.empty:
-        return
-    for col in df1.columns:
-        if col not in df2.columns:
-            df2[col] = default_df[col].iloc[0]
-
-def align_columns_with_default(df1, df2, default_val):
-    for col in df1.columns:
-        if col not in df2.columns:
-            df2[col] = default_val
+    df2_missing_cols = df1.columns.difference(df2.columns)
+    for col in df2_missing_cols:
+        if col in df1_default.columns:
+            combined_df.loc[df2.index, col] = df1_default[col].iloc[0]
+    
+    return combined_df
 
 
 def main(args):
     if not args.results_csv.exists():
-        results_pd = pd.DataFrame(index=["Experiment"])
+        results_pd = pd.DataFrame()
     else:
         with open(args.results_csv, "r") as f:
-            outfile_ref_exp_conf = Path(f.readline().strip())
-        if outfile_ref_exp_conf != args.ref_exp_conf:
-            raise ValueError(
-                f"Reference experiment config in results CSV ({outfile_ref_exp_conf}) does not match provided reference config ({args.ref_exp_conf})."
-            )
-        results_pd = pd.read_csv(args.results_csv, index_col="Experiment", skiprows=1)
+            # match from f"[Reference Experiment Config]{outfile_ref_exp_conf}""
+            first_line = f.readline()
+            if not first_line.startswith("[Reference Experiment Config]"):
+                raise ValueError("Results CSV must start with the reference experiment config.")
+            outfile_ref_exp_conf = Path(first_line[len("[Reference Experiment Config]"):].strip())
+            if outfile_ref_exp_conf.resolve() != args.ref_exp_conf.resolve():
+                raise ValueError(
+                    f"Reference experiment config in results CSV ({outfile_ref_exp_conf}) does not match provided reference config ({args.ref_exp_conf})."
+                )
+            results_pd = pd.read_csv(f, index_col=EXPERIMENT_TAG_COLUMN)
     for exp_results in (args.exp_path / "wav").iterdir():
-        updated_results_pd = update_results(
+        results_pd = update_results(
             results_pd,
             args.exp_path / "config.yml",
             exp_results,
@@ -147,8 +127,8 @@ def main(args):
         )
 
     with open(args.results_csv, "w") as f:
-        f.write(f"{args.ref_exp_conf}\n")
-    updated_results_pd.to_csv(args.results_csv, mode="a", header=True)
+        f.write(f"[Reference Experiment Config]{args.ref_exp_conf}\n")
+    results_pd.to_csv(args.results_csv, mode="a", na_rep=BLANK_VALUE, header=True)
 
 
 if __name__ == "__main__":
