@@ -25,7 +25,7 @@ def get_parser():
 def update_results(
     results_pd: pd.DataFrame,
     exp_config: Path,
-    exp_results: iter[Path],
+    result_folders: iter[Path],
     reference_config: Path,
     exp_tag="",
     result_tags: Optional[iter[str]] = None,
@@ -42,12 +42,12 @@ def update_results(
     
     # add results
     if result_tags is None:
-        result_tags = [""] * len(exp_results)
+        result_tags = [""] * len(result_folders)
     
     exp_results_dict = {}
-    for exp_result, result_tag in zip(exp_results, result_tags):
+    for result_folder, result_tag in zip(result_folders, result_tags):
         # NOTE(jhan): The later results will overwrite the previous results if they have the same key.
-        exp_results_dict |= get_results(exp_result, result_tag=result_tag)
+        exp_results_dict |= get_results(result_folder, result_tag=result_tag)
         
     exp_results_pd = pd.DataFrame(exp_results_dict, index=[exp_tag])
     exp_results_pd = exp_config_diff.join(exp_results_pd)
@@ -65,19 +65,19 @@ def update_results(
     return results_pd
 
 
-def get_results(results_folder: Path, result_tag=""):
+def get_results(result_folder: Path, result_tag=""):
     """
     Extracts results from the experiment results directory.
 
     Parameters:
-    exp_results (Path): Path to the experiment results directory.
+    result_folder (Path): Path to the experiment results directory.
     result_tag (str): Tag to prepend to each result key.
 
     Returns:
     dict: A dictionary with result keys and their corresponding values.
     """
     results = {}
-    for result_file in results_folder.glob("*_res/*_avg_result.txt"):
+    for result_file in result_folder.glob("*_res/*_avg_result.txt"):
         if result_file.is_file():
             with open(result_file, "r") as f:
                 f.readline()
@@ -124,14 +124,14 @@ def main(args):
                     f"Reference experiment config in results CSV ({outfile_ref_exp_conf}) does not match provided reference config ({args.ref_exp_conf})."
                 )
             results_pd = pd.read_csv(f, index_col=EXPERIMENT_TAG_COLUMN)
-    exp_results = list((args.exp_path / "wav").iterdir())
+    result_folders = list((args.exp_path / "wav").iterdir())
     results_pd = update_results(
         results_pd,
         args.exp_path / "config.yml",
-        exp_results,
+        result_folders,
         args.ref_exp_conf,
         exp_tag=args.exp_path.stem,
-        result_tags=[result_path.stem for result_path in exp_results],
+        result_tags=[result_path.stem for result_path in result_folders],
     )
 
     with open(args.results_csv, "w") as f:
