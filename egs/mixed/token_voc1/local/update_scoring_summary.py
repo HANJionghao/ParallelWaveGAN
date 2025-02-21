@@ -37,8 +37,6 @@ def update_results(
     exp_config_pd[EXPERIMENT_TAG_COLUMN] = [exp_tag]
     exp_config_pd.set_index(EXPERIMENT_TAG_COLUMN, inplace=True)
     reference_config_pd = read_and_flatten_config(reference_config)
-    reference_config_pd[EXPERIMENT_TAG_COLUMN] = ["Reference"] # temporary index to align columns
-    reference_config_pd.set_index(EXPERIMENT_TAG_COLUMN, inplace=True)
     exp_config_diff = get_config_differences(exp_config_pd, reference_config_pd, ignored_config_diffs)
     
     # add results
@@ -90,7 +88,7 @@ def get_config_differences(exp_config_pd, reference_config_pd, ignored_diffs):
     combined_df = pd.concat([exp_config_pd, reference_config_pd])
     diff = combined_df.iloc[0].ne(combined_df.iloc[1])
     exp_config_diff = combined_df.loc[exp_config_pd.index, diff]
-    exp_config_diff = exp_config_diff.drop(ignored_diffs, axis=1, errors="ignore")
+    exp_config_diff.drop(ignored_diffs, axis=1, errors="ignore", inplace=True)
     return exp_config_diff
 
 
