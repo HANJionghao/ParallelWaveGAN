@@ -11,6 +11,7 @@ stage=-1       # stage to start
 stop_stage=100 # stage to stop
 verbose=1      # verbosity level (lower is less info)
 n_gpus=1       # number of gpus in training
+n_gpus_eval=0       # number of gpus in training
 n_jobs=8       # number of parallel jobs in feature extraction
 
 # NOTE(kan-bayashi): renamed to conf to avoid conflict in parse_options.sh
@@ -49,6 +50,8 @@ multi_token_files=""    # list of multi token (only used in multi token pattern)
 use_f0=true                                   # whether to add f0
 use_embedding_feats=false                     # whether to use pretrain feature as input
 use_spk_embed=false                           # whether to use speaker embedding
+vc_datadir="" # directory to save vc features TODO(jhan): personal use only, remove this in PR
+vc_dumpdir="" # directory to save vc features TODO(jhan): personal use only, remove this in PR
 spk_embed_scp_tag="espnet_spk"                # scp file for pre-extracted speaker embeddings
 pretrained_model="facebook/hubert-base-ls960" # pre-trained model (confirm it on Huggingface)
 use_multi_layer=false          # Whether to use multi layer
@@ -56,6 +59,13 @@ feat_layer=3                    # Number of total layers for multi layer, specif
 
 fs=16000
 subexp="exp"
+
+versa_dir=    # directory of versa repo
+versa_python= # python path with versa installed
+
+summary_ref_conf= # reference config file for summary; used to compare with the current config
+
+use_multi_resolution_token=false # Whether to use multi resolution
 
 train_batch_sampler_conf="{}"
 dev_batch_sampler_conf="{}"
@@ -97,25 +107,24 @@ fi
 
 if [ "${stage}" -le 1 ] && [ "${stop_stage}" -ge 1 ]; then
     echo "Stage 1: Feature extraction"
-    if [ ! -e "${token_text}" ]; then
-        echo "Valid --token_text is not provided. Please prepare it by yourself."
-        echo "--token_text have 2 kinds of input: path of token_text file / path of token files directory."
-        cat << EOF
----------------------------------
-token_text file: like kaldi-style text as follows:
+    # if use multi token, multi_token_files should be provided
+    if [ "${use_multi_layer}" = true ]; then
+        if [ -z "${multi_token_files}" ]; then
+            echo "Valid --multi_token_files is not provided. Please prepare it by yourself."
+            exit 1
+        fi
+    else
+        if [ -z "${token_text}" ]; then
+            echo "Valid --token_text is not provided. Please prepare it by yourself."
+            echo "--token_text have is the path of a kaldi-style text file. Below is an example."
+            cat << EOF
+----------------------------------
 utt_id_1 0 0 0 0 1 1 1 1 2 2 2 2
 utt_id_2 0 0 0 0 0 0 3 3 3 3 3 3 5 5 5 5
 ...
-----------------------------------
-token files directory: token_text files described above
-It will run in multi-stream way, training set should update in conf/hifigan_token_16k_nodp_f0.v1.yaml.
-token files directory format as follows:
-token_dir/
-    - token_file(layer1)
-    - token_file(layer2)
-    ....
 EOF
-        exit 1
+            exit 1
+        fi
     fi
     # extract raw features
     pids=()
@@ -138,6 +147,8 @@ EOF
             _opts+="--feat-layer ${feat_layer} "
             _opts+="--multi-token-files \"${multi_token_files}\" "
             # _opts+="--multi-token-mix-type ${multi_token_mix_type} "
+        else
+            _opts+="--text ${token_text} "
         fi
         if [ "${use_embedding_feats}" = true ]; then
             _opts+="--use-embedding-feats "
@@ -157,7 +168,6 @@ EOF
                 --config "${conf}" \
                 --scp "${dumpdir}/${name}/raw/wav.JOB.scp" \
                 --dumpdir "${dumpdir}/${name}/raw/dump.JOB" \
-                --text "${token_text}" \
                 --verbose "${verbose}" ${_opts}
         echo "Successfully finished feature extraction of ${name} set."
     ) &
@@ -235,6 +245,15 @@ if [ "${stage}" -le 3 ] && [ "${stop_stage}" -ge 3 ]; then
                 --checkpoint "${checkpoint}" \
                 --outdir "${outdir}/${name}" \
                 --verbose "${verbose}" ${_opts} 
+        if [ "${use_spk_embed}" = true ] && [ -n "${vc_dumpdir}" ]; then
+            [ ! -e "${outdir}_vc/${name}" ] && mkdir -p "${outdir}_vc/${name}"
+            ${cuda_cmd} --gpu "${n_gpus}" "${outdir}_vc/${name}/decode.log" \
+                parallel-wavegan-decode \
+                    --dumpdir "${vc_dumpdir}/${name}/raw" \
+                    --checkpoint "${checkpoint}" \
+                    --outdir "${outdir}_vc/${name}" \
+                    --verbose "${verbose}" ${_opts} 
+        fi
         echo "Successfully finished decoding of ${name} set."
     ) &
     pids+=($!)
@@ -254,44 +273,226 @@ if [ "${stage}" -le 4 ] && [ "${stop_stage}" -ge 4 ]; then
         _gen_wavdir="${_dir}/${dset}"
 
         # Objective Evaluation - MCD
-        echo "Begin Scoring for MCD metrics on ${dset}, results are written under ${_dir}/MCD_res"
+        if [ -s "${_dir}/MCD_res/mcd_avg_result.txt" ]; then # skip if already exists
+            echo "Skip MCD scoring since ${_dir}/MCD_res/mcd_avg_result.txt already exists"
+        else
+            echo "Begin Scoring for MCD metrics on ${dset}, results are written under ${_dir}/MCD_res"
 
-        mkdir -p "${_dir}/MCD_res"
-        python utils/py_utils/evaluate_mcd.py \
-            "${_gen_wavdir}" \
-            "${_gt_wavscp}" \
-            --outdir "${_dir}/MCD_res"
+            mkdir -p "${_dir}/MCD_res"
+            python utils/py_utils/evaluate_mcd.py \
+                "${_gen_wavdir}" \
+                "${_gt_wavscp}" \
+                --outdir "${_dir}/MCD_res"
+        fi
 
         # Objective Evaluation - log-F0 RMSE
-        echo "Begin Scoring for F0 related metrics on ${dset}, results are written under ${_dir}/F0_res"
+        if [ -s "${_dir}/F0_res/log_f0_rmse_avg_result.txt" ]; then # skip if already exists
+            echo "Skip F0 scoring since ${_dir}/F0_res/log_f0_rmse_avg_result.txt already exists"
+        else
+            echo "Begin Scoring for F0 related metrics on ${dset}, results are written under ${_dir}/F0_res"
 
-        mkdir -p "${_dir}/F0_res"
-        python utils/py_utils/evaluate_f0.py \
-            "${_gen_wavdir}" \
-            "${_gt_wavscp}" \
-            --outdir "${_dir}/F0_res"
+            mkdir -p "${_dir}/F0_res"
+            python utils/py_utils/evaluate_f0.py \
+                "${_gen_wavdir}" \
+                "${_gt_wavscp}" \
+                --outdir "${_dir}/F0_res"
+        fi
 
         # Objective Evaluation - semitone ACC
-        echo "Begin Scoring for SEMITONE related metrics on ${dset}, results are written under ${_dir}/SEMITONE_res"
+        if [ -s "${_dir}/SEMITONE_res/semitone_acc_avg_result.txt" ]; then # skip if already exists
+            echo "Skip SEMITONE scoring since ${_dir}/SEMITONE_res/semitone_acc_avg_result.txt already exists"
+        else
+            echo "Begin Scoring for SEMITONE related metrics on ${dset}, results are written under ${_dir}/SEMITONE_res"
 
-        mkdir -p "${_dir}/SEMITONE_res"
-        python utils/py_utils/evaluate_semitone.py \
-            "${_gen_wavdir}" \
-            "${_gt_wavscp}" \
-            --outdir "${_dir}/SEMITONE_res"
+            mkdir -p "${_dir}/SEMITONE_res"
+            python utils/py_utils/evaluate_semitone.py \
+                "${_gen_wavdir}" \
+                "${_gt_wavscp}" \
+                --outdir "${_dir}/SEMITONE_res"
+        fi
 
         # Objective Evaluation - VUV error
-        echo "Begin Scoring for VUV related metrics on ${dset}, results are written under ${_dir}/VUV_res"
+        if [ -s "${_dir}/VUV_res/vuv_error_avg_result.txt" ]; then # skip if already exists
+            echo "Skip VUV scoring since ${_dir}/VUV_res/vuv_error_avg_result.txt already exists"
+        else
+            echo "Begin Scoring for VUV related metrics on ${dset}, results are written under ${_dir}/VUV_res"
 
-        mkdir -p "${_dir}/VUV_res"
-        python utils/py_utils/evaluate_vuv.py \
-            "${_gen_wavdir}" \
-            "${_gt_wavscp}" \
-            --outdir "${_dir}/VUV_res"
+            mkdir -p "${_dir}/VUV_res"
+            python utils/py_utils/evaluate_vuv.py \
+                "${_gen_wavdir}" \
+                "${_gt_wavscp}" \
+                --outdir "${_dir}/VUV_res"
+        fi
 
+        #  Objective Evaluation - speaker similarity
+        _gen_wavscp="${_dir}/${dset}_wav.scp"
+        # create if file does not exist or is empty
+        if [ ! -s "${_gen_wavscp}" ]; then
+            find ${_gen_wavdir} -name "*.wav" | sort | while read -r line; do
+                uttid=$(basename "${line}" _gen.wav)
+                echo "${uttid} ${line}"
+            done > "${_gen_wavscp}"
+            echo "Generated ${_gen_wavscp}"
+        fi
+
+        if [ -s "${_dir}/SPK_res/spk_similarity_avg_result.txt" ]; then # skip if already exists
+            echo "Skip speaker similarity scoring since ${_dir}/SPK_res/spk_similarity_avg_result.txt already exists"
+        else
+            echo "Begin Scoring for speaker similarity metrics on ${dset}, results are written under ${_dir}/SPK_res"
+            _opts=
+            if [ "${n_gpus_eval}" -gt 1 ]; then
+                _opts+="--use_gpu true "
+                _cmd="${cuda_cmd} --gpu ${n_gpus_eval}"
+            else
+                _cmd="${decode_cmd}"
+            fi
+            mkdir -p "${_dir}/SPK_res"
+            ${_cmd} "${_dir}/SPK_res/score.log" \
+                ${versa_python} ${versa_dir}/versa/bin/scorer.py \
+                    --score_config ${versa_dir}/egs/separate_metrics/spk_similarity.yaml \
+                    --pred ${_gen_wavscp} \
+                    --gt ${_gt_wavscp} \
+                    --output_file ${_dir}/SPK_res/versa_utt2speaker_similarity \
+                    --io kaldi \
+                    ${_opts}
+
+            python local/format_versa_result.py \
+                ${_dir}/SPK_res/versa_utt2speaker_similarity \
+                'spk_similarity' \
+                ${_dir}/SPK_res
+        fi
+
+        # Objective Evaluation - SingMOS
+        if [ -s "${_dir}/SingMOS_res/singmos_avg_result.txt" ]; then # skip if already exists
+            echo "Skip SingMOS scoring since ${_dir}/SingMOS_res/singmos_avg_result.txt already exists"
+        else
+            echo "Begin Scoring for SingMOS metrics on ${dset}, results are written under ${_dir}/SingMOS_res"
+
+            mkdir -p "${_dir}/SingMOS_res"
+            ${cuda_cmd} --gpu "${n_gpus}" "${_dir}/SingMOS_res/score.log" \
+                ${versa_python} ${versa_dir}/versa/bin/scorer.py \
+                    --score_config ${versa_dir}/egs/separate_metrics/pseudo_mos.yaml \
+                    --pred ${_gen_wavscp} \
+                    --gt ${_gt_wavscp} \
+                    --output_file ${_dir}/SingMOS_res/versa_utt2singmos \
+                    --io kaldi \
+                    --use_gpu true # force to use gpu for SingMOS eval
+            python local/format_versa_result.py \
+                ${_dir}/SingMOS_res/versa_utt2singmos \
+                'singmos' \
+                ${_dir}/SingMOS_res
+        fi
+
+        if [ -d "${_dir}_vc" ] && [ -n "${vc_datadir}" ]; then
+            _dir_vc="${_dir}_vc"
+            _gen_wavdir_vc="${_dir_vc}/${dset}"
+            _gt_wavscp_vc="${vc_datadir}/${dset}/vc_wav.scp"
+
+            # Objective Evaluation - log-F0 RMSE
+            if [ -s "${_dir}/VC_F0_res/log_f0_rmse_avg_result.txt" ]; then # skip if already exists
+                echo "Skip F0 scoring since ${_dir}/VC_F0_res/log_f0_rmse_avg_result.txt already exists"
+            else
+                echo "Begin Scoring for F0 related metrics on ${dset}, results are written under ${_dir}/VC_F0_res"
+                mkdir -p "${_dir}/VC_F0_res"
+                python utils/py_utils/evaluate_f0.py \
+                    "${_gen_wavdir_vc}" \
+                    "${_gt_wavscp}" \
+                    --outdir "${_dir}/VC_F0_res"
+            fi
+
+            # Objective Evaluation - semitone ACC
+            if [ -s "${_dir}/VC_SEMITONE_res/semitone_acc_avg_result.txt" ]; then # skip if already exists
+                echo "Skip SEMITONE scoring since ${_dir}/VC_SEMITONE_res/semitone_acc_avg_result.txt already exists"
+            else
+                echo "Begin Scoring for SEMITONE related metrics on ${dset}, results are written under ${_dir}/VC_SEMITONE_res"
+                mkdir -p "${_dir}/VC_SEMITONE_res"
+                python utils/py_utils/evaluate_semitone.py \
+                    "${_gen_wavdir_vc}" \
+                    "${_gt_wavscp}" \
+                    --outdir "${_dir}/VC_SEMITONE_res"
+            fi
+
+            # Objective Evaluation - VUV error
+            if [ -s "${_dir}/VC_VUV_res/vuv_error_avg_result.txt" ]; then # skip if already exists
+                echo "Skip VUV scoring since ${_dir}/VC_VUV_res/vuv_error_avg_result.txt already exists"
+            else
+                echo "Begin Scoring for VUV related metrics on ${dset}, results are written under ${_dir}/VC_VUV_res"
+                mkdir -p "${_dir}/VC_VUV_res"
+                python utils/py_utils/evaluate_vuv.py \
+                    "${_gen_wavdir_vc}" \
+                    "${_gt_wavscp}" \
+                    --outdir "${_dir}/VC_VUV_res"
+            fi
+
+            # Objective Evaluation - speaker similarity
+            _gen_wavscp_vc="${_dir_vc}/${dset}_wav.scp"
+            # create if file does not exist or is empty
+            if [ ! -s "${_gen_wavscp_vc}" ]; then
+                find ${_gen_wavdir_vc} -name "*.wav" | sort | while read -r line; do
+                    uttid=$(basename "${line}" _gen.wav)
+                    echo "${uttid} ${line}"
+                done > "${_gen_wavscp_vc}"
+                echo "Generated ${_gen_wavscp_vc}"
+            fi
+
+
+            if [ -s "${_dir}/VC_SPK_res/spk_similarity_avg_result.txt" ]; then # skip if already exists
+                echo "Skip speaker similarity scoring since ${_dir}/VC_SPK_res/spk_similarity_avg_result.txt already exists"
+            else
+                echo "Begin Scoring for speaker similarity metrics on ${dset}, results are written under ${_dir}/VC_SPK_res"
+                _opts=
+                if [ "${n_gpus_eval}" -gt 1 ]; then
+                    _opts+="--use_gpu true "
+                    _cmd="${cuda_cmd} --gpu ${n_gpus_eval}"
+                else
+                    _cmd="${decode_cmd}"
+                fi
+                mkdir -p "${_dir}/VC_SPK_res"
+                ${_cmd} "${_dir}/VC_SPK_res/score.log" \
+                    ${versa_python} ${versa_dir}/versa/bin/scorer.py \
+                        --score_config ${versa_dir}/egs/separate_metrics/spk_similarity.yaml \
+                        --pred ${_gen_wavscp_vc} \
+                        --gt ${_gt_wavscp_vc} \
+                        --output_file ${_dir}/VC_SPK_res/versa_utt2speaker_similarity \
+                        --io kaldi \
+                        ${_opts}
+
+                python local/format_versa_result.py \
+                    ${_dir}/VC_SPK_res/versa_utt2speaker_similarity \
+                    'spk_similarity' \
+                    ${_dir}/VC_SPK_res
+            fi
+
+            # Objective Evaluation - SingMOS
+            if [ -s "${_dir}/VC_SingMOS_res/singmos_avg_result.txt" ]; then # skip if already exists
+                echo "Skip SingMOS scoring since ${_dir}/VC_SingMOS_res/singmos_avg_result.txt already exists"
+            else
+                echo "Begin Scoring for SingMOS metrics on ${dset}, results are written under ${_dir}/VC_SingMOS_res"
+                mkdir -p "${_dir}/VC_SingMOS_res"
+                ${cuda_cmd} --gpu "${n_gpus}" "${_dir}/VC_SingMOS_res/score.log" \
+                    ${versa_python} ${versa_dir}/versa/bin/scorer.py \
+                        --score_config ${versa_dir}/egs/separate_metrics/pseudo_mos.yaml \
+                        --pred ${_gen_wavscp_vc} \
+                        --gt ${_gt_wavscp_vc} \
+                        --output_file ${_dir}/VC_SingMOS_res/versa_utt2singmos \
+                        --io kaldi \
+                        --use_gpu true # force to use gpu for SingMOS eval
+                python local/format_versa_result.py \
+                    ${_dir}/VC_SingMOS_res/versa_utt2singmos \
+                    'singmos' \
+                    ${_dir}/VC_SingMOS_res
+            fi
+        fi
     done
 else
     echo "Skip the evaluation stages"
 fi
 
+if [ "${stage}" -le 5 ] && [ "${stop_stage}" -ge 5 ]; then
+    echo "Stage 5: Results summary"
+    # summarize results in csv
+    summary_csv="summary.csv"
+    echo "Summarize results in ${summary_csv}"
+    python ./local/update_scoring_summary.py ${expdir} ${summary_ref_conf} ${summary_csv}
+fi
 echo "Finished."
