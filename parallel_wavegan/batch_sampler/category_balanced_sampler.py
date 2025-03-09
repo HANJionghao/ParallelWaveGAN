@@ -46,7 +46,7 @@ class CategoryBalancedSampler(Sampler):
         self.epoch = epoch
         self.utt_ids = dataset.utt_ids
         self.category2utt = {
-            cat: utts.split(" ")
+            cat: [utt for utt in utts.split(" ") if utt in self.utt_ids]
             for cat, utts in read_2columns_text(category2utt_file).items()
         }
         self.categories = list(self.category2utt.keys())
