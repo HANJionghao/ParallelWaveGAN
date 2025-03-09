@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import torch
-import torch.nn.functional as F
+import torch.nn as nn
 import logging
 from typing import Literal
 
 
-class SpkEmbedExtractor(torch.nn.Module):
+class SpkEmbedExtractor(nn.Module):
     def __init__(
         self,
         toolkit,
         pretrained_model,
         in_sr,
         freeze=True,
-        device: str | torch.device = None,
+        device: Optional[str | torch.device] = None,
     ):
         from pathlib import Path
         import torchaudio.transforms as T
@@ -138,7 +138,7 @@ class SpkEmbedExtractor(torch.nn.Module):
         return embeds
 
 
-class SpeakerContrastiveLoss(torch.nn.Module):
+class SpeakerContrastiveLoss(nn.Module):
     """Speaker contrastive loss module."""
 
     def __init__(
@@ -151,7 +151,6 @@ class SpeakerContrastiveLoss(torch.nn.Module):
 
         Args:
             device (str or torch.device): Device type.
-            in_sr (int): Input sampling rate.
             speaker_model_conf (dict): Speaker embedding configuration.
             temperature (float or str): Temperature parameter for contrastive loss. If "learnable", it will be a learnable parameter.
 
@@ -160,12 +159,12 @@ class SpeakerContrastiveLoss(torch.nn.Module):
         self.temperature_inverse = (
             1 / temperature
             if temperature != "learnable"
-            else torch.nn.Parameter(torch.tensor(1 / 0.07))
+            else nn.Parameter(torch.tensor(1 / 0.07))
         )
         speaker_model_conf = speaker_model_conf or {}
-        if (spk_embed_tool := speaker_model_conf.get("tool", None)) and (
-            pretrained_model := speaker_model_conf.get("pretrained_model", None)
-        ):
+        spk_embed_tool = speaker_model_conf.get("tool", None)
+        pretrained_model = speaker_model_conf.get("pretrained_model", None)
+        if spk_embed_tool and pretrained_model:
             self.speaker_embedding_model = SpkEmbedExtractor(
                 toolkit=spk_embed_tool,
                 pretrained_model=pretrained_model,
@@ -178,6 +177,8 @@ class SpeakerContrastiveLoss(torch.nn.Module):
                 "Tool or pretrained_model is not provided."
                 "Please check the configuration file."
             )
+        self.cosine_similarity = nn.CosineSimilarity(dim=2)
+        self.criterion = nn.CrossEntropyLoss()
 
     def _get_speaker_embedding(self, wav: torch.Tensor) -> torch.Tensor:
         """Get speaker embedding.
@@ -210,18 +211,13 @@ class SpeakerContrastiveLoss(torch.nn.Module):
         # get speaker embeddings
         assert (
             singing_hat.size(1) == 1
-        ), f"singing_hat should be (B, 1, T), but got {singing_hat.size()}"
+        ), f"Expected singing_hat to have shape (B, 1, T), but got {singing_hat.shape}"
         spk_embs_hat = self._get_speaker_embedding(singing_hat.squeeze(1))
 
-        # normalize embeddings
-        spk_embs_hat = F.normalize(spk_embs_hat, dim=1)  # (B, D)
-        spk_embs_positive = F.normalize(spk_embs_positive, dim=1)  # (B, D)
-
-        # calculate cosine similarity
-        sim_matrix = torch.matmul(spk_embs_hat, spk_embs_positive.t())  # (B, B)
+        sim_matrix = self.cosine_similarity(spk_embs_hat.unsqueeze(1), spk_embs_positive.unsqueeze(0))  # (B, B)
         sim_matrix = sim_matrix * self.temperature_inverse
         target = torch.arange(sim_matrix.size(0), device=sim_matrix.device)  # (B,)
-        loss = F.cross_entropy(sim_matrix, target) + F.cross_entropy(
+        loss = self.criterion(sim_matrix, target) + self.criterion(
             sim_matrix.t(), target
         )
         return loss
