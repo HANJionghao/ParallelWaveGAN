@@ -12,6 +12,7 @@ import logging
 import os
 import sys
 from collections import defaultdict
+from functools import partial
 
 import matplotlib
 import numpy as np
@@ -1362,7 +1363,7 @@ def main():
         "--additional-feature-keys",
         default=[],  # TODO(jhan): verify if works when --additional-feature-keys is not specified
         type=str,
-        nargs="*",
+        action='append',
         help="additional feature keys to use.",
     )
     load_dict_arg = lambda x: json.loads(x.replace("'", '"'))
@@ -1476,7 +1477,7 @@ def main():
                 resolution_query = "*.h5"
                 resolution_load_fn = lambda x: read_hdf5(x, "resolution")
             additional_feature_query_load_fn = {
-                key: ("*.h5", lambda x: read_hdf5(x, key))
+                key: ("*.h5", partial(lambda x, _key: read_hdf5(x, _key), _key=key))
                 for key in args.additional_feature_keys
             }
             if use_local_condition:
