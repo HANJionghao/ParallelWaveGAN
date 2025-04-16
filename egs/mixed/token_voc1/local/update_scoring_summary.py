@@ -8,7 +8,7 @@ import yaml
 
 BLANK_VALUE = "-"
 EXPERIMENT_TAG_COLUMN = "Experiment"
-IGNORED_CONFIG_KEYS = ("outdir", "config", "resume", "save_interval_steps")
+IGNORED_CONFIG_KEYS = ("outdir", "config", "resume", "save_interval_steps", "train_max_steps")
 
 
 def get_parser():
