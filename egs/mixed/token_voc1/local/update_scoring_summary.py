@@ -58,9 +58,6 @@ def update_results(
     results_pd = combine_rows_with_default_pds(
         ((results_pd, reference_config_pd), (exp_results_pd, exp_config_pd))
     )
-
-    results_pd.sort_index(inplace=True)
-
     return results_pd
 
 
@@ -156,7 +153,8 @@ def main(args):
     )
 
     results_pd.sort_index(axis=1, inplace=True, key=lambda columns: [f"0{col}" if col.startswith("conf.") else (col if not col.split(".")[-1].startswith("VC_") else col.replace(".VC_", ".ZVC_")) for col in columns]) # prioritize config columns, deprioritize VC results
-    results_pd = results_pd.iloc[results_pd.apply(lambda row: row.to_list(), axis=1).argsort()] # sort rows by content
+    # sort rows by index name, i.e. experiment name
+    results_pd.sort_index(axis=0, inplace=True)
     results_pd.columns = pd.MultiIndex.from_tuples([col.split('.', maxsplit=1) for col in results_pd.columns]) # convert back to multi-index
 
     with open(args.results_csv, "w") as f:
