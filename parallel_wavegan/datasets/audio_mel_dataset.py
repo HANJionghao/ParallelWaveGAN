@@ -445,7 +445,7 @@ class AudioMelF0Dataset(Dataset):
             mel_files = [mel_files[idx] for idx in idxs]
             f0_files = [f0_files[idx] for idx in idxs]
             for key in additional_features.keys():
-                additional_features[key] = [
+                additional_features[key][0] = [
                     additional_features[key][0][idx] for idx in idxs
                 ]
         if mel_length_threshold is not None:
