@@ -1433,18 +1433,18 @@ def main():
         "--additional-feature-keys",
         default=[],  # TODO(jhan): verify if works when --additional-feature-keys is not specified
         type=str,
-        action='append',
+        action="append",
         help="additional feature keys to use.",
     )
     load_dict_arg = lambda x: json.loads(x.replace("'", '"'))
     parser.add_argument(
         "--train-batch-sampler-conf",
-        default={},  # TODO(jhan): verify if default={} works
+        default={},
         type=load_dict_arg,
     )
     parser.add_argument(
         "--dev-batch-sampler-conf",
-        default={},  # TODO(jhan): verify if default={} works
+        default={},
         type=load_dict_arg,
     )
     args = parser.parse_args()
