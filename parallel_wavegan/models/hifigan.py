@@ -1879,3 +1879,69 @@ class DiscreteMRSymbolF0Generator(DiscreteSymbolF0Generator):
             return c
         else:
             return c.squeeze(0).transpose(1, 0)
+
+
+class Conv1DStackPredictor(torch.nn.Module):
+    def __init__(
+        self,
+        in_channels,
+        kernel_sizes,
+        strides,
+        hidden_channels,
+        paddings,
+        pred_projections,
+        bias=True,
+        nonlinear_activation="LeakyReLU",
+        nonlinear_activation_params={"negative_slope": 0.1},
+        use_weight_norm=True,
+    ):
+        super().__init__()
+        self.projections = torch.nn.ModuleDict(
+            {
+                key: torch.nn.Linear(
+                    hidden_channels[-1], int(torch.prod(torch.tensor(value["shape"])))
+                )
+                for key, value in pred_projections.items()
+            }
+        )
+        self.projection_shapes = {
+            key: value["shape"] for key, value in pred_projections.items()
+        }
+        self.conv_layers = torch.nn.ModuleList()
+        for idx, (kernel_size, stride, padding) in enumerate(
+            zip(kernel_sizes, strides, paddings)
+        ):
+            in_ch = in_channels if idx == 0 else hidden_channels[idx - 1]
+            self.conv_layers += [
+                torch.nn.Conv1d(
+                    in_channels=in_ch,
+                    out_channels=hidden_channels[idx],
+                    kernel_size=kernel_size,
+                    stride=stride,
+                    padding=padding,
+                    bias=bias,
+                )
+            ]
+            if use_weight_norm:
+                self.conv_layers[-1] = torch.nn.utils.weight_norm(
+                    self.conv_layers[-1], name="weight"
+                )
+            self.conv_layers += [
+                getattr(torch.nn, nonlinear_activation)(**nonlinear_activation_params)
+            ]
+
+    def forward(self, x):
+        # x: (B, in_channels, T_in)
+        for conv_layer in self.conv_layers:
+            x = conv_layer(x)  # (B, C, T)
+        return {
+            key: self.projections[key](x.transpose(1, 2))  # (B, T, out_dim)
+            .transpose(1, 2)  # (B, out_dim, T)
+            .view(x.size(0), *self.projection_shapes[key], x.size(2))  # (B, ..., T)
+            for key in self.projections
+        }
+
+    def inference(self, x):
+        # x: (T_in, in_channels)
+        x = x.transpose(0, 1).unsqueeze(0)
+        return self.forward(x)

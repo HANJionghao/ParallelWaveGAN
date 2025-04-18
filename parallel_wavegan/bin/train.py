@@ -375,6 +375,80 @@ class Trainer(object):
             self.optimizer["discriminator"].step()
             self.scheduler["discriminator"].step()
 
+        # unsupervised training
+        ##############################
+        #   Generator (unsupervised) #
+        ##############################
+        if "generator_predictor" in self.model and self.steps > self.config.get("unsupervised_train_start_steps", 0):
+            # initialize
+            unsupervised_gen_loss = 0.0
+
+            if not self.use_duration_prediction and not self.is_vq:
+                if len(x) == 3:
+                    x_vc = (x[0], x[1], x_ref[2])
+                    assert "spemb" in x_ref[2], f"spemb not found in x_ref[2]: {x_ref[2]}"
+                else:
+                    x_vc = (x[0], x[1], x_ref[2], x[3])
+                y_ = self.model["generator"](*x_vc)
+                preds = self.model["generator_predictor"](y_)
+                if "class_idx" in x[2]:
+                    batch_mask = x[2]["class_idx"]  # (batch_size,)
+                else:
+                    batch_mask = None
+                if "f0" in preds:
+                    pred_f0 = preds["f0"]
+                    target_f0 = x[1]
+                    if batch_mask is not None:
+                        pred_f0 = pred_f0[batch_mask]
+                        target_f0 = target_f0[batch_mask]
+                    if pred_f0.numel() == 0:
+                        unsupervised_f0_loss = torch.tensor(0.0, device=pred_f0.device)
+                    else:
+                        unsupervised_f0_loss = self.criterion["mse"](pred_f0, target_f0)
+                    unsupervised_gen_loss += unsupervised_f0_loss
+                    self.total_train_loss["train/unsupervised_f0_loss"] += unsupervised_f0_loss.item()
+                if "token" in preds:
+                    pred_token = preds["token"]
+                    target_token = x[0].long()
+                    if batch_mask is not None:
+                        pred_token = pred_token[batch_mask]
+                        target_token = target_token[batch_mask]
+                    if pred_token.numel() == 0:
+                        unsupervised_token_loss = torch.tensor(0.0, device=pred_token.device)
+                    else:
+                        unsupervised_token_loss = self.criterion["cross_entropy"](pred_token, target_token)
+                    unsupervised_gen_loss += unsupervised_token_loss
+                    self.total_train_loss["train/unsupervised_token_loss"] += unsupervised_token_loss.item()
+            else:
+                raise NotImplementedError(
+                    "Unsupervised training is not supported for VQVAE or duration predictor for now."
+                )
+
+            if self.config["generator_params"]["out_channels"] > 1:
+                raise NotImplementedError(
+                    "Unsupervised training is not supported for multi-band signal for now."
+                )
+            self.total_train_loss["train/unsupervised_generator_loss"] += unsupervised_gen_loss.item()
+
+            # update generator & predictor
+            self.optimizer["generator"].zero_grad()
+            self.optimizer["generator_predictor"].zero_grad()
+            unsupervised_gen_loss.backward()
+            if self.config["generator_grad_norm"] > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model["generator"].parameters(),
+                    self.config["generator_grad_norm"],
+                )
+            if self.config["generator_predictor_grad_norm"] > 0:
+                torch.nn.utils.clip_grad_norm_(
+                    self.model["generator_predictor"].parameters(),
+                    self.config["generator_predictor_grad_norm"],
+                )
+            self.optimizer["generator"].step()
+            self.optimizer["generator_predictor"].step()
+            self.scheduler["generator"].step()
+            self.scheduler["generator_predictor"].step()
+
         # update counts
         self.steps += 1
         self.tqdm.update(1)
@@ -528,6 +602,59 @@ class Trainer(object):
             self.total_eval_loss["eval/commitment_loss"] += commit_loss.item()
         if self.use_duration_prediction:
             self.total_eval_loss["eval/duration_loss"] += duration_loss.item()
+
+        ########################################
+        #   Generator Predictor (unsupervised) #
+        ########################################
+        if "generator_predictor" in self.model:
+            # initialize
+            unsupervised_gen_loss = 0.0
+
+            if not self.use_duration_prediction and not self.is_vq:
+                if len(x) == 3:
+                    x_vc = (x[0], x[1], x_ref[2])
+                    assert "spemb" in x_ref[2], f"spemb not found in x_ref[2]: {x_ref[2]}"
+                else:
+                    x_vc = (x[0], x[1], x_ref[2], x[3])
+                y_ = self.model["generator"](*x_vc)
+                preds = self.model["generator_predictor"](y_)
+                if "class_idx" in x[2]:
+                    batch_mask = x[2]["class_idx"]  # (batch_size,)
+                else:
+                    batch_mask = None
+                if "f0" in preds:
+                    pred_f0 = preds["f0"]
+                    target_f0 = x[1]
+                    if batch_mask is not None:
+                        pred_f0 = pred_f0[batch_mask]
+                        target_f0 = target_f0[batch_mask]
+                    if pred_f0.numel() == 0:
+                        unsupervised_f0_loss = torch.tensor(0.0, device=pred_f0.device)
+                    else:
+                        unsupervised_f0_loss = self.criterion["mse"](pred_f0, target_f0)
+                    unsupervised_gen_loss += unsupervised_f0_loss
+                    self.total_eval_loss["eval/unsupervised_f0_loss"] += unsupervised_f0_loss.item()
+                if "token" in preds:
+                    pred_token = preds["token"]
+                    target_token = x[0].long()
+                    if batch_mask is not None:
+                        pred_token = pred_token[batch_mask]
+                        target_token = target_token[batch_mask]
+                    if pred_token.numel() == 0:
+                        unsupervised_token_loss = torch.tensor(0.0, device=pred_token.device)
+                    else:
+                        unsupervised_token_loss = self.criterion["cross_entropy"](pred_token, target_token)
+                    unsupervised_gen_loss += unsupervised_token_loss
+                    self.total_eval_loss["eval/unsupervised_token_loss"] += unsupervised_token_loss.item()
+            else:
+                raise NotImplementedError(
+                    "Generator predictor is not supported for VQVAE or duration predictor for now."
+                )
+            if self.config["generator_params"]["out_channels"] > 1:
+                raise NotImplementedError(
+                    "Generator predictor is not supported for multi-band signal for now."
+                )
+            self.total_eval_loss["eval/unsupervised_generator_loss"] += unsupervised_gen_loss.item()
 
     def _eval_epoch(self):
         """Evaluate model one epoch."""
@@ -1907,6 +2034,15 @@ def main():
             **config["discriminator_params"],
         ).to(device),
     }
+    generator_predictpr_type = config.get("generator_predictor_type", None)
+    if generator_predictpr_type is not None:
+        generator_predictor_class = getattr(
+            parallel_wavegan.models,
+            generator_predictpr_type,
+        )
+        model["generator_predictor"] = generator_predictor_class(
+            **config["generator_predictor_params"],
+        ).to(device)
 
     # define criterions
     criterion = {
@@ -1920,6 +2056,8 @@ def main():
         ).to(device),
         "mse": torch.nn.MSELoss().to(device),
     }
+    if config.get("generator_predictor_type", None) is not None:
+        criterion["cross_entropy"] = torch.nn.CrossEntropyLoss().to(device)
     if config.get("use_stft_loss", True):  # keep compatibility
         config["use_stft_loss"] = True
         criterion["stft"] = MultiResolutionSTFTLoss(
@@ -2014,6 +2152,15 @@ def main():
             **config["discriminator_optimizer_params"],
         ),
     }
+    if config.get("generator_predictor_type", None) is not None:
+        generator_predictor_optimizer_class = getattr(
+            parallel_wavegan.optimizers,
+            config.get("generator_predictor_optimizer_type", "RAdam"),
+        )
+        optimizer["generator_predictor"] = generator_predictor_optimizer_class(
+            model["generator_predictor"].parameters(),
+            **config["generator_predictor_optimizer_params"],
+        )
     generator_scheduler_class = getattr(
         torch.optim.lr_scheduler,
         # keep compatibility
@@ -2034,6 +2181,15 @@ def main():
             **config["discriminator_scheduler_params"],
         ),
     }
+    if config.get("generator_predictor_type", None) is not None:
+        generator_predictor_scheduler_class = getattr(
+            torch.optim.lr_scheduler,
+            config.get("generator_predictor_scheduler_type", "StepLR"),
+        )
+        scheduler["generator_predictor"] = generator_predictor_scheduler_class(
+            optimizer=optimizer["generator_predictor"],
+            **config["generator_predictor_scheduler_params"],
+        )
     if args.distributed:
         # wrap model for distributed training
         try:
@@ -2044,9 +2200,13 @@ def main():
             )
         model["generator"] = DistributedDataParallel(model["generator"])
         model["discriminator"] = DistributedDataParallel(model["discriminator"])
+        if config.get("generator_predictor_type", None) is not None:
+            raise NotImplementedError("Not supported for now.")
 
     # show settings
     logging.info(model["generator"])
+    if "generator_predictor" in model:
+        logging.info(model["generator_predictor"])
     logging.info(model["discriminator"])
     logging.info(optimizer["generator"])
     logging.info(optimizer["discriminator"])
