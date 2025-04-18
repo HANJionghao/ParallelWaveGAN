@@ -199,16 +199,17 @@ class Trainer(object):
     def _train_step(self, batch):
         """Train model one step."""
         # parse batch and send to device
-        is_batch_pair = (
-            self.data_loader["train"].batch_sampler.__class__.__name__
-            == "CategoryPairSampler"
-        )
-        if self.use_duration_prediction:
-            x, y, ds = self._parse_batch(batch, is_batch_list=is_batch_pair)
+        if isinstance(self.data_loader["train"].collate_fn, EqualPartitionCollater):
+            is_batch_list = True
         else:
-            x, y = self._parse_batch(batch, is_batch_list=is_batch_pair)
+            is_batch_list = False
 
-        if is_batch_pair:
+        if self.use_duration_prediction:
+            x, y, ds = self._parse_batch(batch, is_batch_list=is_batch_list)
+        else:
+            x, y = self._parse_batch(batch, is_batch_list=is_batch_list)
+
+        if is_batch_list:
             x, x_ref = x
             y, y_ref = y
             if self.use_duration_prediction:
@@ -414,17 +415,17 @@ class Trainer(object):
     @torch.no_grad()
     def _eval_step(self, batch):
         """Evaluate model one step."""
-        is_batch_pair = (
-            self.data_loader["dev"].batch_sampler.__class__.__name__
-            == "CategoryPairSampler"
-        )
+        if isinstance(self.data_loader["dev"].collate_fn, EqualPartitionCollater):
+            is_batch_list = True
+        else:
+            is_batch_list = False
         # parse batch and send to device
         if self.use_duration_prediction:
-            x, y, ds = self._parse_batch(batch, is_batch_list=is_batch_pair)
+            x, y, ds = self._parse_batch(batch, is_batch_list=is_batch_list)
         else:
-            x, y = self._parse_batch(batch, is_batch_list=is_batch_pair)
+            x, y = self._parse_batch(batch, is_batch_list=is_batch_list)
 
-        if is_batch_pair:
+        if is_batch_list:
             x, x_ref = x
             y, y_ref = y
             if self.use_duration_prediction:
@@ -575,16 +576,17 @@ class Trainer(object):
         # delayed import to avoid error related backend error
         import matplotlib.pyplot as plt
 
-        is_batch_pair = (
-            self.data_loader["dev"].batch_sampler.__class__.__name__
-            == "CategoryPairSampler"
-        )
+        if isinstance(self.data_loader["dev"].collate_fn, EqualPartitionCollater):
+            is_batch_list = True
+        else:
+            is_batch_list = False
+
         # parse batch and send to device
         if self.use_duration_prediction:
-            x_batch, y_batch, _ = self._parse_batch(batch, is_batch_list=is_batch_pair)
+            x_batch, y_batch, _ = self._parse_batch(batch, is_batch_list=is_batch_list)
         else:
-            x_batch, y_batch = self._parse_batch(batch, is_batch_list=is_batch_pair)
-        if is_batch_pair:
+            x_batch, y_batch = self._parse_batch(batch, is_batch_list=is_batch_list)
+        if is_batch_list:
             x_batch, _ = x_batch
             y_batch, _ = y_batch
 
@@ -727,6 +729,18 @@ class Trainer(object):
             self.finish_train = True
 
 
+COLLATER_REGISTRY = {}
+
+
+def register_collater(name):
+    def wrapper(cls):
+        COLLATER_REGISTRY[name] = cls
+        return cls
+
+    return wrapper
+
+
+@register_collater("Collater")
 class Collater(object):
     """Customized collater for Pytorch DataLoader in training."""
 
@@ -743,7 +757,6 @@ class Collater(object):
         use_global_condition=False,
         use_local_condition=False,
         pad_value=0,
-        batch_partition_sizes=None,
     ):
         """Initialize customized collater for PyTorch DataLoader.
 
@@ -757,7 +770,6 @@ class Collater(object):
             use_duration (bool): Whether to use duration for duration prediction.
             use_global_condition (bool): Whether to use global conditioning.
             use_local_condition (bool): Whether to use local conditioning.
-            batch_partition_sizes (list): List of batch size splits.
 
         """
         if hop_size is not None:
@@ -776,7 +788,6 @@ class Collater(object):
         self.use_global_condition = use_global_condition
         self.use_local_condition = use_local_condition
         self.pad_value = pad_value
-        self.batch_partition_sizes = batch_partition_sizes
         if not self.use_aux_input:
             assert not self.use_noise_input, "Not supported."
             assert not self.use_duration, "Not supported."
@@ -813,17 +824,7 @@ class Collater(object):
             Tensor: Target signal batch (B, 1, T).
 
         """
-        if self.batch_partition_sizes is None:
-            return self._collate_batch(batch)
-
-        start = 0
-        batches = []
-        for length in self.batch_partition_sizes:
-            end = start + length
-            batch_ = batch[start:end]
-            batches.append(self._collate_batch(batch_))
-            start = end
-        return batches
+        return self._collate_batch(batch)
 
     def _collate_batch(self, batch):
         if self.use_aux_input:
@@ -1059,6 +1060,75 @@ class Collater(object):
         return pad
 
 
+@register_collater("EqualPartitionCollater")
+class EqualPartitionCollater(Collater):
+    def __init__(
+        self,
+        batch_max_steps=20480,
+        hop_size=256,
+        aux_context_window=2,
+        use_noise_input=False,
+        use_f0=False,
+        use_f0_and_excitation=False,
+        use_aux_input=True,
+        use_duration=False,
+        use_global_condition=False,
+        use_local_condition=False,
+        pad_value=0,
+        num_partitions=2,
+    ):
+        """Initialize customized collater for PyTorch DataLoader.
+
+        Args:
+            batch_max_steps (int): The maximum length of input signal in batch.
+            hop_size (int): Hop size of auxiliary features.
+            aux_context_window (int): Context window size for auxiliary feature conv.
+            use_noise_input (bool): Whether to use noise input.
+            use_f0_and_excitation (bool): Whether to use f0 and ext. input.
+            use_aux_input (bool): Whether to use auxiliary input.
+            use_duration (bool): Whether to use duration for duration prediction.
+            use_global_condition (bool): Whether to use global conditioning.
+            use_local_condition (bool): Whether to use local conditioning.
+            num_partitions (int): Number of partitions for equal partitioning.
+
+        """
+        super().__init__(
+            batch_max_steps=batch_max_steps,
+            hop_size=hop_size,
+            aux_context_window=aux_context_window,
+            use_noise_input=use_noise_input,
+            use_f0=use_f0,
+            use_f0_and_excitation=use_f0_and_excitation,
+            use_aux_input=use_aux_input,
+            use_duration=use_duration,
+            use_global_condition=use_global_condition,
+            use_local_condition=use_local_condition,
+            pad_value=pad_value,
+        )
+        self.num_partitions = num_partitions
+
+    def __call__(self, batch):
+        batch_size = len(batch)
+        partition_size = batch_size // self.num_partitions
+        assert (
+            partition_size >= 1
+        ), f"Batch size {batch_size} is too small for {self.num_partitions} partitions."
+        remainder = batch_size % self.num_partitions
+        if remainder != 0:
+            logging.warning(
+                f"Batch size {batch_size} is not perfectly divisible by {self.num_partitions}. "
+                f"Remainder {remainder} will be ignored. Please confirm if this is expected."
+            )
+        batches = []
+        for start in range(0, batch_size - remainder, partition_size):
+            end = start + partition_size
+            sub_batch = self._collate_batch(batch[start:end])
+            batches.append(sub_batch)
+
+        return batches
+
+
+@register_collater("Collater_MR")
 class Collater_MR(Collater):
     """Customized collater for Pytorch DataLoader in training.
         For multi-resolution specified.
@@ -1724,8 +1794,10 @@ def main():
     # get data loader
     for x in ["train", "dev"]:
         if not args.use_multi_resolution_token:
+            collater_type = config.get(f"{x}_collater_type", "Collater")
+            collater_class = COLLATER_REGISTRY[collater_type]
             collater = {
-                x: Collater(
+                x: collater_class(
                     batch_max_steps=config["batch_max_steps"],
                     hop_size=config.get("hop_size", None),
                     aux_context_window=config["generator_params"].get("aux_context_window", 0),
@@ -1739,11 +1811,7 @@ def main():
                     pad_value=config["generator_params"].get(
                         "num_embs", 0
                     ),  # assume 0-based discrete symbol
-                    batch_partition_sizes=(
-                        [config["batch_size"], config["batch_size"]]
-                        if config.get(f"{x}_batch_sampler_type", None) == "CategoryPairSampler"
-                        else None
-                    ),
+                    **config.get(f"{x}_collater_conf", {}),
                 )
                 for x in ["train", "dev"]
             }
