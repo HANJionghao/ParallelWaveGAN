@@ -404,6 +404,7 @@ class BigVGAN(
 
     # Additional methods for huggingface_hub support
     def _save_pretrained(self, save_directory: Path) -> None:
+        # TODO(jhan): update to the style in pwg
         """Save weights and config.json from a Pytorch model to a local directory."""
 
         model_path = save_directory / "bigvgan_generator.pt"
@@ -415,6 +416,7 @@ class BigVGAN(
 
     @classmethod
     def _from_pretrained(
+        # TODO(jhan): move this to parallel_wavegan/bin/train.py#L158 load_checkpoint
         cls,
         *,
         model_id: str,
