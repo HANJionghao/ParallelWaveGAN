@@ -2034,11 +2034,11 @@ def main():
             **config["discriminator_params"],
         ).to(device),
     }
-    generator_predictpr_type = config.get("generator_predictor_type", None)
-    if generator_predictpr_type is not None:
+    generator_predictor_type = config.get("generator_predictor_type", None)
+    if generator_predictor_type is not None:
         generator_predictor_class = getattr(
             parallel_wavegan.models,
-            generator_predictpr_type,
+            generator_predictor_type,
         )
         model["generator_predictor"] = generator_predictor_class(
             **config["generator_predictor_params"],
