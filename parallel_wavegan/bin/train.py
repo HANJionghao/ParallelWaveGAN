@@ -44,6 +44,7 @@ from parallel_wavegan.losses import (
     FeatureMatchLoss,
     GeneratorAdversarialLoss,
     MelSpectrogramLoss,
+    MultiScaleMelSpectrogramLoss,
     MultiResolutionSTFTLoss,
     SpeakerContrastiveLoss,
 )
@@ -278,6 +279,10 @@ class Trainer(object):
                 mel_loss = self.criterion["mel"](y_, y)
                 gen_loss += mel_loss
                 self.total_train_loss["train/mel_loss"] += mel_loss.item()
+            if self.config["use_multiscale_mel_loss"]:
+                multiscale_mel_loss = self.criterion["multiscale_mel"](y_, y)
+                gen_loss += multiscale_mel_loss
+                self.total_train_loss["train/multiscale_mel_loss"] += multiscale_mel_loss.item()
 
             # weighting aux loss
             gen_loss *= self.config.get("lambda_aux", 1.0)
@@ -2095,6 +2100,12 @@ def main():
             ).to(device)
     else:
         config["use_mel_loss"] = False
+    if config.get("use_multiscale_mel_loss", False):
+        criterion["multiscale_mel"] = MultiScaleMelSpectrogramLoss(
+            sampling_rate=config["sampling_rate"]
+        ).to(device)
+    else:
+        config["use_multiscale_mel_loss"] = False
     if config.get("use_duration_loss", False):  # keep compatibility
         if config.get("duration_loss_params", None) is None:
             criterion["duration"] = DurationPredictorLoss(
