@@ -313,12 +313,19 @@ class Trainer(object):
                 del x_ref, y_ref # TODO(jhan): May remove this line, and delete ds_ref if exists
                 spk_loss = self.criterion["speaker_contra"](y_, spemb_ref)
                 lambda_speaker_contra_conf = self.config["lambda_speaker_contra"]
-                lambda_speaker_contra_type = lambda_speaker_contra_conf["scaling_type"]
+                lambda_speaker_contra_type = lambda_speaker_contra_conf.get(
+                    "scaling_type", "constant"
+                )
                 if lambda_speaker_contra_type == "constant":
-                    lambda_speaker_contra = lambda_speaker_contra_conf["base_weight"]
+                    lambda_speaker_contra = float(
+                        lambda_speaker_contra_conf["base_weight"]
+                    )
                 elif lambda_speaker_contra_type == "linear":
-                    lambda_speaker_contra = lambda_speaker_contra_conf["base_weight"] * min(
-                        self.steps, lambda_speaker_contra_conf["max_scaling_steps"]
+                    lambda_speaker_contra = float(
+                        lambda_speaker_contra_conf["base_weight"]
+                    ) * min(
+                        self.steps,
+                        float(lambda_speaker_contra_conf["max_scaling_steps"]),
                     )
                 else:
                     raise ValueError(
