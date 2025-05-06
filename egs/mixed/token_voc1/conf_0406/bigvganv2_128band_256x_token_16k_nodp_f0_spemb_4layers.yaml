@@ -31,7 +31,7 @@ generator_type: DiscreteSymbolBigVGAN
 generator_params:
     in_channels: 768                      # Number of input channels.
     out_channels: 1                       # Number of output channels.
-    channels: 1536 # TODO(jhan7): confirm with config runned on PSC, how this is set up??
+    channels: 1536                        # Number of initial channels.
     kernel_size: 7                        # Kernel size of initial and final conv layers.
     upsample_scales: [5, 4, 2, 2, 2, 2]   # Upsampling scales.
     upsample_kernel_sizes: [11, 8, 4, 4, 4, 4]  # Kernel size for upsampling layers.
