@@ -151,7 +151,7 @@ feat_match_loss_params:
 ###########################################################
 use_unsupervised_loss: true      # Whether to use unsupervised loss.
 unsupervised_loss_params:
-    speaker_loss_type: "none"      # Type of speaker loss. "cosine" or "none".
+    speaker_loss_type: "cosine"      # Type of speaker loss. "cosine" or "none".
     f0_loss_type: "mse"              # Type of f0 loss. "mse" or "none".
     token_loss_type: "cross_entropy" # Type of token loss. "cross_entropy" or "none".
 

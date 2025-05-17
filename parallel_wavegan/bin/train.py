@@ -47,6 +47,7 @@ from parallel_wavegan.losses import (
     MultiScaleMelSpectrogramLoss,
     MultiResolutionSTFTLoss,
     SpeakerContrastiveLoss,
+    CosineDistanceLoss,
 )
 from parallel_wavegan.utils import read_hdf5
 
@@ -407,7 +408,7 @@ class Trainer(object):
                     batch_mask = x[2]["class_idx"]  # (batch_size,)
                 else:
                     batch_mask = None
-                if "f0" in preds:
+                if "f0" in preds and self.criterion["generator_predictor_f0"] is not None:
                     pred_f0 = preds["f0"]
                     target_f0 = x[1]
                     if batch_mask is not None:
@@ -416,10 +417,10 @@ class Trainer(object):
                     if pred_f0.numel() == 0:
                         unsupervised_f0_loss = torch.tensor(0.0, device=pred_f0.device)
                     else:
-                        unsupervised_f0_loss = self.criterion["mse"](pred_f0, target_f0)
+                        unsupervised_f0_loss = self.criterion["generator_predictor_f0"](pred_f0, target_f0)
                     unsupervised_gen_loss += unsupervised_f0_loss
                     self.total_train_loss["train/unsupervised_f0_loss"] += unsupervised_f0_loss.item()
-                if "token" in preds:
+                if "token" in preds and self.criterion["generator_predictor_token"] is not None:
                     pred_token = preds["token"]
                     target_token = x[0].long()
                     if batch_mask is not None:
@@ -428,9 +429,22 @@ class Trainer(object):
                     if pred_token.numel() == 0:
                         unsupervised_token_loss = torch.tensor(0.0, device=pred_token.device)
                     else:
-                        unsupervised_token_loss = self.criterion["cross_entropy"](pred_token, target_token)
+                        unsupervised_token_loss = self.criterion["generator_predictor_token"](pred_token, target_token)
                     unsupervised_gen_loss += unsupervised_token_loss
                     self.total_train_loss["train/unsupervised_token_loss"] += unsupervised_token_loss.item()
+                if "spemb" in preds and self.criterion["generator_predictor_spemb"] is not None:
+                    pred_spemb = preds["spemb"]
+                    target_spemb = x_ref[2]["spemb"]
+                    if batch_mask is not None:
+                        pred_spemb = pred_spemb[batch_mask]
+                        target_spemb = target_spemb[batch_mask]
+                    if pred_spemb.numel() == 0:
+                        unsupervised_spemb_loss = torch.tensor(0.0, device=pred_spemb.device)
+                    else:
+                        unsupervised_spemb_loss = self.criterion["generator_predictor_spemb"](pred_spemb, target_spemb)
+
+                    unsupervised_gen_loss += unsupervised_spemb_loss
+                    self.total_train_loss["train/unsupervised_spemb_loss"] += unsupervised_spemb_loss.item()
             else:
                 raise NotImplementedError(
                     "Unsupervised training is not supported for VQVAE or duration predictor for now."
@@ -653,7 +667,7 @@ class Trainer(object):
                     batch_mask = x[2]["class_idx"]  # (batch_size,)
                 else:
                     batch_mask = None
-                if "f0" in preds:
+                if "f0" in preds and self.criterion["generator_predictor_f0"] is not None:
                     pred_f0 = preds["f0"]
                     target_f0 = x[1]
                     if batch_mask is not None:
@@ -662,10 +676,10 @@ class Trainer(object):
                     if pred_f0.numel() == 0:
                         unsupervised_f0_loss = torch.tensor(0.0, device=pred_f0.device)
                     else:
-                        unsupervised_f0_loss = self.criterion["mse"](pred_f0, target_f0)
+                        unsupervised_f0_loss = self.criterion["generator_predictor_f0"](pred_f0, target_f0)
                     unsupervised_gen_loss += unsupervised_f0_loss
                     self.total_eval_loss["eval/unsupervised_f0_loss"] += unsupervised_f0_loss.item()
-                if "token" in preds:
+                if "token" in preds and self.criterion["generator_predictor_token"] is not None:
                     pred_token = preds["token"]
                     target_token = x[0].long()
                     if batch_mask is not None:
@@ -674,9 +688,22 @@ class Trainer(object):
                     if pred_token.numel() == 0:
                         unsupervised_token_loss = torch.tensor(0.0, device=pred_token.device)
                     else:
-                        unsupervised_token_loss = self.criterion["cross_entropy"](pred_token, target_token)
+                        unsupervised_token_loss = self.criterion["generator_predictor_token"](pred_token, target_token)
                     unsupervised_gen_loss += unsupervised_token_loss
                     self.total_eval_loss["eval/unsupervised_token_loss"] += unsupervised_token_loss.item()
+                if "spemb" in preds and self.criterion["generator_predictor_spemb"] is not None:
+                    pred_spemb = preds["spemb"]
+                    target_spemb = x_ref[2]["spemb"]
+                    if batch_mask is not None:
+                        pred_spemb = pred_spemb[batch_mask]
+                        target_spemb = target_spemb[batch_mask]
+                    if pred_spemb.numel() == 0:
+                        unsupervised_spemb_loss = torch.tensor(0.0, device=pred_spemb.device)
+                    else:
+                        unsupervised_spemb_loss = self.criterion["generator_predictor_spemb"](pred_spemb, target_spemb)
+
+                    unsupervised_gen_loss += unsupervised_spemb_loss
+                    self.total_eval_loss["eval/unsupervised_spemb_loss"] += unsupervised_spemb_loss.item()
             else:
                 raise NotImplementedError(
                     "Generator predictor is not supported for VQVAE or duration predictor for now."
@@ -2087,8 +2114,40 @@ def main():
         ).to(device),
         "mse": torch.nn.MSELoss().to(device),
     }
-    if config.get("generator_predictor_type", None) is not None:
-        criterion["cross_entropy"] = torch.nn.CrossEntropyLoss().to(device)
+    if config.get("use_unsupervised_loss", False):
+        generator_predictor_spemb_loss_type = config["unsupervised_loss_params"].get(
+            "speaker_loss_type", "none"
+        )
+        generator_predictor_f0_loss_type = config["unsupervised_loss_params"].get(
+            "f0_loss_type", "none"
+        )
+        generator_predictor_token_loss_type = config["unsupervised_loss_params"].get(
+            "token_loss_type", "none"
+        )
+        if generator_predictor_spemb_loss_type == "cosine":
+            criterion["generator_predictor_spemb"] = CosineDistanceLoss().to(device)
+        elif generator_predictor_spemb_loss_type == "none":
+            criterion["generator_predictor_spemb"] = None
+        else:
+            raise NotImplementedError(
+                f"generator_predictor_spemb_loss_type {generator_predictor_spemb_loss_type} is not supported."
+            )
+        if generator_predictor_f0_loss_type == "mse":
+            criterion["generator_predictor_f0"] = torch.nn.MSELoss().to(device)
+        elif generator_predictor_f0_loss_type == "none":
+            criterion["generator_predictor_f0"] = None
+        else:
+            raise NotImplementedError(
+                f"generator_predictor_f0_loss_type {generator_predictor_f0_loss_type} is not supported."
+            )
+        if generator_predictor_token_loss_type == "cross_entropy":
+            criterion["generator_predictor_token"] = torch.nn.CrossEntropyLoss().to(device)
+        elif generator_predictor_token_loss_type == "none":
+            criterion["generator_predictor_token"] = None
+        else:
+            raise NotImplementedError(
+                f"generator_predictor_token_loss_type {generator_predictor_token_loss_type} is not supported."
+            )
     if config.get("use_stft_loss", True):  # keep compatibility
         config["use_stft_loss"] = True
         criterion["stft"] = MultiResolutionSTFTLoss(
