@@ -18,16 +18,23 @@ n_jobs=8       # number of parallel jobs in feature extraction
 conf=conf/hifigan_token_16k_nodp_f0.v1.yaml
 
 # directory path setting
-db_root=/data3/tyx/dataset/opencpop # direcotry including wavfiles (MODIFY BY YOURSELF)
-                          # each wav filename in the directory should be unique
-                          # e.g.
-                          # /path/to/database
-                          # ├── utt_1.wav
-                          # ├── utt_2.wav
-                          # │   ...
-                          # └── utt_N.wav
+raw_dataset_paths=local/data/raw_dataset_paths.csv
+espnet_dataset_paths=local/data/espnet_dataset_paths.csv
+combined_dataset_paths=local/data/combined_dataset_paths.csv
+datasets_to_extract_feats=local/data/combined_dataset_paths.csv # set it to local/data/raw_dataset_paths.csv if espnet files already generated labels
+
 dumpdir=dump           # directory to dump features
 datadir=data           # directory to save data
+wav_dump=wav_dump # directory to save wav files
+
+# preprocessing and feats extraction setting
+audio_ext=flac # audio file extension to be used after resampling
+use_gpu_in_feats_extract=true
+km_folder=
+kmeans_features=
+RVQ_layers=1
+espnet_path=
+local_data_opts=
 
 # training related setting
 tag=""     # tag for directory to save model
@@ -77,32 +84,39 @@ set -euo pipefail
 
 if [ "${stage}" -le 0 ] && [ "${stop_stage}" -ge 0 ]; then
     echo "Stage 0: Data preparation"
-    if [ ! -e "${db_root}" ]; then
-        echo "ERROR: Opencpop data does not exist."
-        echo "ERROR: Please download https://wenet.org.cn/opencpop/download/ and locate it at ${download_dir}"
-        exit 1
+
+    if [ "${use_gpu_in_feats_extract}" = true ]; then
+        _cmd="${cuda_cmd}"
+    else
+        _cmd="${decode_cmd}"
     fi
-    echo "Please make sure fs=${fs} is right sample rate for model."
-    mkdir -p wav_dump
-    python local/data_prep.py ${db_root} \
-        --wav_dumpdir wav_dump \
-        --sr ${fs}
+    ./local/data/data.sh \
+        --raw_dataset_paths "${raw_dataset_paths}" \
+        --espnet_dataset_paths "${espnet_dataset_paths}" \
+        --combined_dataset_paths "${combined_dataset_paths}" \
+        --datasets_to_extract_feats "${datasets_to_extract_feats}" \
+        --processed_datasets_dir "${datadir}_processed" \
+        --combined_datadir "${datadir}" \
+        --wav_dump "${wav_dump}" \
+        --resampled_wav_dump "wav_dump_resampled${fs}" \
+        --fs "${fs}" \
+        --train_set "${train_set}" \
+        --dev_set "${dev_set}" \
+        --eval_set "${eval_set}" \
+        --audio_ext "${audio_ext}" \
+        --km_folder "${km_folder}" \
+        --kmeans_features "${kmeans_features}" \
+        --RVQ_layers "${RVQ_layers}" \
+        --use_gpu "${use_gpu_in_feats_extract}" \
+        --stage 1 \
+        --stop_stage 100 \
+        --cmd "${_cmd}" \
+        --espnet_path "${espnet_path}" \
+        --append false \
+        --clean_up true \
+        ${local_data_opts}
 
-    sort -o ${datadir}/train/wav.scp ${datadir}/train/wav.scp
-
-    dev_num=50
-    train_num=$(( $(wc -l < ${datadir}/train/wav.scp) - dev_num ))
-
-    mkdir -p ${datadir}/${dev_set}
-    head -n $train_num ${datadir}/${train_set}/wav.scp > ${datadir}/${train_set}/wav.scp.tmp
-    tail -n $dev_num ${datadir}/${train_set}/wav.scp > ${datadir}/${dev_set}/wav.scp.tmp
-    mv ${datadir}/${dev_set}/wav.scp.tmp ${datadir}/${dev_set}/wav.scp
-    mv ${datadir}/${train_set}/wav.scp.tmp ${datadir}/${train_set}/wav.scp
-    
-    head -n $train_num ${datadir}/${train_set}/utt2spk > ${datadir}/${train_set}/utt2spk.tmp
-    tail -n $dev_num ${datadir}/${train_set}/utt2spk > ${datadir}/${dev_set}/utt2spk.tmp
-    mv ${datadir}/${dev_set}/utt2spk.tmp ${datadir}/${dev_set}/utt2spk
-    mv ${datadir}/${train_set}/utt2spk.tmp ${datadir}/${train_set}/utt2spk
+    # sort -o ${datadir}/train/wav.scp ${datadir}/train/wav.scp
 fi
 
 if [ "${stage}" -le 1 ] && [ "${stop_stage}" -ge 1 ]; then
