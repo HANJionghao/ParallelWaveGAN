@@ -8,7 +8,7 @@ source_wav_scp=wav.scp
 output_wav_scp=wav_segment.scp
 wav_dump=wav_dump
 append=false
-verbose=true
+verbose=false
 segment_mode="multi" # multi or once
 remove_short=true
 
@@ -96,7 +96,8 @@ if [ "${verbose}" = true ]; then
     echo "Moving segments from ${tmp_dir} to ${wav_dump}"
 fi
 mkdir -p "${wav_dump}"
-mv "${tmp_dir}"/* "${wav_dump}" && rm -r "${tmp_dir}"
+rsync -a --remove-source-files "${tmp_dir}/" "${wav_dump}/" # NOTE(jhan): use rsync to avoid argument list too long error 
+rmdir "${tmp_dir}"
 
 # create the output wav.scp file
 if [ "${verbose}" = true ]; then
