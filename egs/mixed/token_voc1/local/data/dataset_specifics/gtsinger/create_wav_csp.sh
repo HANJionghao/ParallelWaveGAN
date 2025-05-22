@@ -60,6 +60,7 @@ for lang in ${languages}; do
         utt_id="${file#${dataset_folder}/}" # e.g., "<dataset_folder>/Japanese/JA-Tenor-1/Vibrato/Heartful Song/Paired_Speech_Group/0003.wav" -> "Japanese/JA-Tenor-1/Vibrato/Heartful Song/Paired_Speech_Group/0003.wav"
         utt_id="${utt_id//\//_}" # e.g., -> "Japanese_JA-Tenor-1_Vibrato_Heartful Song_Paired_Speech_Group_0003.wav"
         utt_id="${utt_id// /_}" # e.g., -> "Japanese_JA-Tenor-1_Vibrato_Heartful_Song_Paired_Speech_Group_0003.wav"
+        utt_id="${utt_id//　/_}" # e.g., -> "Japanese_JA-Tenor-1_Vibrato_Heartful_Song_Paired_Speech_Group_0003.wav"
         utt_id="${utt_id%.wav}" # e.g., -> "Japanese_JA-Tenor-1_Vibrato_Heartful_Song_Paired_Speech_Group_0003"
         utt_id="gtsinger_${utt_id//\//_}" # e.g., -> "gtsinger_Japanese_JA-Tenor-1_Vibrato_Heartful_Song_Paired_Speech_Group_0003"
         echo "${utt_id} ${file}" >> "${output_wav_scp}"
