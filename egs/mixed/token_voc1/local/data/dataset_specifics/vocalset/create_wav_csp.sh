@@ -36,7 +36,8 @@ fi
 
 echo "Creating ${output_wav_scp} from ${dataset_folder} for VocalSet dataset"
 find "${dataset_folder}" -type f -name "*.wav" | sort | while read -r file; do
-    utt_id="vocalset_$(basename "$file" .wav)" # e.g., "<dataset_folder>/FULL/female1/arpeggios/belt/f1_arpeggios_belt_c_a.wav" -> "vocalset_f1_arpeggios_belt_c_a.wav"
+    utt_id="vocalset_$(basename "$file" .wav)" # e.g., "<dataset_folder>/FULL/female7/long_tones/trillo/f7_ long_trillo_a.wav" -> "vocalset_f7_ long_trillo_a"
+    utt_id="${utt_id// /}" # e.g., -> "vocalset_f7_long_trillo_a"
     echo "${utt_id} ${file}" >> "${output_wav_scp}"
 done
 
