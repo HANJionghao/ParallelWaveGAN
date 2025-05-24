@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright 2019 Tomoki Hayashi
+# Copyright 2025 Jionghao Han
 #  MIT License (https://opensource.org/licenses/MIT)
 
 """Dataset modules based on kaldi-style scp files."""
@@ -12,7 +13,7 @@ import kaldiio
 import numpy as np
 from torch.utils.data import Dataset
 
-from parallel_wavegan.utils import HDF5ScpLoader, NpyScpLoader
+from parallel_wavegan.utils import HDF5ScpLoader, NpyScpLoader, AudioSCPLoader
 
 
 def _get_feats_scp_loader(feats_scp):
@@ -170,6 +171,15 @@ class AudioMelSCPDataset(Dataset):
         return len(self.utt_ids)
 
 
+def load_audio_scp(wav_scp, segments=None):
+    # load scp as lazy dict and read with soundfile
+    if segments is not None:
+        raise NotImplementedError(
+            "Loading audio with segments has not been implemented yet. "
+        )
+    return AudioSCPLoader(wav_scp)
+
+
 class AudioSCPDataset(Dataset):
     """PyTorch compatible audio dataset based on kaldi-stype scp files."""
 
@@ -181,6 +191,7 @@ class AudioSCPDataset(Dataset):
         return_utt_id=False,
         return_sampling_rate=False,
         allow_cache=False,
+        legacy=False,
     ):
         """Initialize dataset.
 
@@ -194,7 +205,10 @@ class AudioSCPDataset(Dataset):
 
         """
         # load scp as lazy dict
-        audio_loader = kaldiio.load_scp(wav_scp, segments=segments)
+        if legacy:
+            audio_loader = kaldiio.load_scp(wav_scp, segments=segments)
+        else:
+            audio_loader = load_audio_scp(wav_scp, segments=segments)
         audio_keys = list(audio_loader.keys())
 
         # filter by threshold

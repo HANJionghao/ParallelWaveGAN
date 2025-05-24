@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 
 # Copyright 2019 Tomoki Hayashi
+# Copyright 2025 Jionghao Han
 #  MIT License (https://opensource.org/licenses/MIT)
 
 """Utility functions."""
@@ -17,6 +18,7 @@ import h5py
 import numpy as np
 import torch
 import yaml
+import soundfile as sf
 from filelock import FileLock
 
 PRETRAINED_MODEL_LIST = {
@@ -272,6 +274,60 @@ class NpyScpLoader(object):
     def __getitem__(self, key):
         """Get ndarray for a given key."""
         return np.load(self.data[key])
+
+    def __len__(self):
+        """Return the length of the scp file."""
+        return len(self.data)
+
+    def __iter__(self):
+        """Return the iterator of the scp file."""
+        return iter(self.data)
+
+    def keys(self):
+        """Return the keys of the scp file."""
+        return self.data.keys()
+
+    def values(self):
+        """Return the values of the scp file."""
+        for key in self.keys():
+            yield self[key]
+
+
+class AudioSCPLoader(object):
+    """Loader class for a fests.scp file of audio file.
+
+    Examples:
+        key1 /some/path/a.wav
+        key2 /some/path/b.flac
+        key3 /some/path/c.flac
+        key4 /some/path/d.wav
+        ...
+        >>> loader = AudioSCPLoader("feats.scp")
+        >>> fs, array = loader["key1"]
+
+    """
+    def __init__(self, feats_scp):
+        """Initialize audio scp loader.
+
+        Args:
+            feats_scp (str): Kaldi-style feats.scp file with audio format.
+
+        """
+        with open(feats_scp) as f:
+            lines = [line.replace("\n", "") for line in f.readlines()]
+        self.data = {}
+        for line in lines:
+            key, value = line.split(maxsplit=1)
+            self.data[key] = value
+
+    def get_path(self, key):
+        """Get audio file path for a given key."""
+        return self.data[key]
+
+    def __getitem__(self, key):
+        """Get ndarray for a given key."""
+        audio, fs = sf.read(self.data[key])
+        return fs, audio
 
     def __len__(self):
         """Return the length of the scp file."""
