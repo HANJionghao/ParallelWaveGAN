@@ -38,7 +38,7 @@ if [ "${use_multi_layer}" = true ]; then
     token_files_all_under_split=true
     for split in ${train_set} ${dev_set} ${eval_set}; do
         for file in ${token_files}; do
-            if [ ! -f ${token_folder}/${split}/${file} ]; then
+            if [ ! -f ${datadir}/${split}/${file} ]; then
                 token_files_all_under_split=false
                 break
             fi
