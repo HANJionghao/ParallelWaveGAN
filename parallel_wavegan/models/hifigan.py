@@ -1320,6 +1320,9 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
         layer_num=12,
         use_fix_weight=False,
         use_f0=True,
+        legacy=True, # TODO(jhan7): remove this in PR
+        use_vuv=False,
+        vuv_emb_dim=None,
     ):
         """Initialize HiFiGANGenerator module.
 
@@ -1347,6 +1350,8 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
             layer_num(int): Numbert of layers used (multi layer)
             use_fix_weight(bool): Whether to frozen the weight in use_weight_sum (multi_layer, Residual Cluster)
             use_f0(bool): Whether to add additioal f0
+            use_vuv(bool): Whether to add vuv embedding
+            vuv_emb_dim (int): Dimension of vuv embedding
         """
         super().__init__(
             in_channels=in_channels,
@@ -1374,6 +1379,11 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
                 in_features=1,
                 out_features=linear_channel,
             )
+        self.use_vuv = use_vuv
+        if use_vuv is True:
+            self.vuv_embedding = torch.nn.Embedding(
+                num_embeddings=2, embedding_dim=vuv_emb_dim
+            )
 
         self.use_weight_sum = use_weight_sum
         if use_weight_sum is True:
@@ -1396,14 +1406,22 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
                     for _ in range(self.layer_num)
                 ]
             )
-
-        self.input_conv = torch.nn.Conv1d(
-            in_channels + linear_channel if use_f0 is True else in_channels,
-            channels,
-            kernel_size,
-            1,
-            padding=(kernel_size - 1) // 2,
-        )
+        if not self.use_vuv:
+            self.input_conv = torch.nn.Conv1d(
+                in_channels + linear_channel if use_f0 is True else in_channels,
+                channels,
+                kernel_size,
+                1,
+                padding=(kernel_size - 1) // 2,
+            )
+        else:
+            self.input_conv = torch.nn.Conv1d(
+                in_channels + linear_channel + vuv_emb_dim if use_f0 is True else in_channels + vuv_emb_dim,
+                channels,
+                kernel_size,
+                1,
+                padding=(kernel_size - 1) // 2,
+            )
 
         self.use_embedding_feats = use_embedding_feats
         self.use_spk_embed = use_spk_embed
@@ -1411,7 +1429,14 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
         if self.use_spk_embed:
             self.concat_spk_emb = concat_spk_emb
             if not self.concat_spk_emb:
-                self.embed_proj = torch.nn.Linear(spk_emb_dim, in_channels)
+                self.legacy = legacy # NOTE(jhan7): for backward compatibility. TODO(jhan7): remove this in PR
+                if self.legacy: # TODO(jhan7): remove this in PR
+                    self.embed_proj = torch.nn.Linear(spk_emb_dim, in_channels) # NOTE(jhan7): remove this in PR
+                    return
+                if self.use_vuv:
+                    self.embed_proj = torch.nn.Linear(spk_emb_dim, in_channels + linear_channel + vuv_emb_dim if use_f0 else in_channels + vuv_emb_dim)
+                else:
+                    self.embed_proj = torch.nn.Linear(spk_emb_dim, in_channels + linear_channel if use_f0 else in_channels)  # NOTE(jhan7): moved f0 to the front 0515
 
     def forward(
         self, c, f0=None, additional_feats=None, store_feature=False
@@ -1467,6 +1492,23 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
                 assert c.size(1) == 1
                 c = self.emb(c.squeeze(1).long()).transpose(1, 2)  # (B, C, T)
 
+        if f0 is not None and self.use_f0:
+            if not self.legacy: # TODO(jhan7): remove this in PR
+                f0 = self.f0_embedding(f0.transpose(1, 2)).transpose(1, 2)
+                c = torch.cat((c, f0), dim=1) # NOTE(jhan7): moved f0 to the front 0515
+
+        if self.use_vuv:
+            if "vuv" not in additional_feats:
+                raise ValueError(
+                    "VUV is not provided. "
+                    "Please remove the current dump folder "
+                    "and rerun run.sh with --use_vuv true"
+                )
+            vuv = additional_feats["vuv"]  # (B, T)
+            assert vuv.ndim == 2, f"Expected vuv to have 2 dimensions, got {vuv.shape=}"
+            vuv = self.vuv_embedding(vuv.long())  # (B, T, vuv_emb_dim)
+            c = torch.cat((c, vuv.transpose(1, 2)), dim=1)
+
         if self.use_spk_embed:
             # c: (B, C, T)
             assert "spemb" in additional_feats, (
@@ -1481,6 +1523,12 @@ class DiscreteSymbolF0Generator(DiscreteSymbolHiFiGANGenerator):
             else:
                 g = g.unsqueeze(2)  # (B, C_spemb, 1)
                 c = torch.cat([c, g], dim=-1)  # (B, C + C_spemb, T)
+        
+        if self.legacy: # TODO(jhan7): remove this in PR
+            if f0 is not None and self.use_f0: # TODO(jhan7): remove this in PR
+                f0 = self.f0_embedding(f0.transpose(1, 2)).transpose(1, 2) # TODO(jhan7): remove this in PR
+                c = torch.cat((c, f0), dim=1) # TODO(jhan7): remove this in PR
+
 
         # NOTE(Yuxun): c shoulde reshape as (B, T, C)
         if store_feature:

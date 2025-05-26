@@ -23,6 +23,7 @@ import kaldiio
 
 from parallel_wavegan.datasets import AudioDataset, AudioSCPDataset
 from parallel_wavegan.utils import write_hdf5
+from parallel_wavegan.utils.read_text import read_2columns_text
 
 
 def _convert_to_continuous_f0(f0: np.array) -> np.array:
@@ -88,12 +89,14 @@ def f0_dio(
         frame_period=frame_period,
     )
     f0 = pyworld.stonemask(x, f0, timeaxis, sampling_rate)
+    vuv = np.zeros(f0.shape, dtype=np.int32)
+    vuv[f0 > 0] = 1
     if use_continuous_f0:
         f0 = _convert_to_continuous_f0(f0)
     if use_log_f0:
         nonzero_idxs = np.where(f0 != 0)[0]
         f0[nonzero_idxs] = np.log(f0[nonzero_idxs])
-    return f0
+    return f0, vuv
 
 
 def main():
@@ -226,6 +229,12 @@ def main():
         default=None,
         help="kaldi-style speaker embedding scp file.",
     )
+    parser.add_argument(
+        "--class-scp",
+        type=str,
+        default=None,
+        help="kaldi-style class scp file.",
+    )
     args = parser.parse_args()
 
     # set logger
@@ -312,6 +321,28 @@ def main():
     spk_embed_loader = (
         kaldiio.load_scp(args.spk_embed_scp) if args.spk_embed_scp is not None else None
     )
+    class_idx_loader = (
+        read_2columns_text(args.class_scp) if args.class_scp is not None else None
+    )
+    
+    if config.get("f0_predictor", "dio") == "crepe":
+        print("Importing crepe")
+        import sys
+        sys.path.append("/ocean/projects/cis210027p/jhan7/cartoon_voice/model/ParallelWaveGAN/egs/mixed/token_voc1/local") # TODO(jhan): temporary solution. fix crepe.py import later
+
+        from CrepeF0Predictor import CrepeF0Predictor
+        print("Using CrepeF0Predictor")
+        f0_predictor = CrepeF0Predictor(
+            hop_length=config["hop_size"],
+            f0_min=config["f0_predictor_params"]["f0_min"],
+            f0_max=config["f0_predictor_params"]["f0_max"],
+            device=None,
+            sampling_rate=config["sampling_rate"],
+            use_log_f0=True,
+        )
+    else:
+        f0_predictor = None
+        
 
     # check directly existence
     if not os.path.exists(args.dumpdir):
@@ -422,7 +453,7 @@ def main():
         logging.info(f"Mod: {len(audio) - len(mel) * config['hop_size']}")
         if len(mel) * config["hop_size"] < len(audio):
             logging.warning(
-                f"[{utt_id=}] len(mel) * config['hop_size'] < len(audio), may be errors."
+                f"[{utt_id=}] len(mel) * config['hop_size'] < len(audio), may be errors. {len(mel)=}, {config['hop_size']=}, {len(audio)=}, len(mel) * config['hop_size']={len(mel) * config['hop_size']}"
             )
         # logging.info(f'audio: {len(audio)}')
         # import math
@@ -439,11 +470,19 @@ def main():
 
         # use f0
         if args.use_f0:
-            f0 = f0_dio(
-                audio,
-                sampling_rate=config["sampling_rate"],
-                hop_size=config["hop_size"],
-            )  # (#frames,)
+            if config.get("f0_predictor", "dio") == "dio":
+                f0, vuv = f0_dio(
+                    audio,
+                    sampling_rate=config["sampling_rate"],
+                    hop_size=config["hop_size"],
+                )  # (#frames,)
+            elif config["f0_predictor"] == "crepe":
+                f0, vuv = f0_predictor.compute_f0_uv(audio)
+            else:
+                raise NotImplementedError(
+                    f"f0 predictor {config['f0_predictor']} is not implemented."
+                )
+
             # logging.info(f'f0({f0.shape}): {f0}')
             if len(f0) > len(mel):
                 f0 = f0[: len(mel)]
@@ -461,6 +500,9 @@ def main():
             continue
 
         # save
+        if args.use_f0 and (f0 == 0).all():
+            logging.warning(f"{utt_id} f0 is all zeros. Skip saving.")
+            continue
         if config["format"] == "hdf5":
             # logging.info(f'mel: {mel.shape} f0: {f0.shape}')
             write_hdf5(
@@ -496,12 +538,25 @@ def main():
                     "f0",
                     f0.astype(np.float32),
                 )
+                write_hdf5(
+                    os.path.join(args.dumpdir, f"{utt_id}.h5"),
+                    "vuv",
+                    vuv.astype(np.int32),
+                )
             if spk_embed_loader:
                 spk_embed = spk_embed_loader[utt_id]
                 write_hdf5(
                     os.path.join(args.dumpdir, f"{utt_id}.h5"),
                     "spemb",
                     spk_embed.astype(np.float32),
+                )
+                
+            if class_idx_loader:
+                class_idx = class_idx_loader[utt_id]
+                write_hdf5(
+                    os.path.join(args.dumpdir, f"{utt_id}.h5"),
+                    "class_idx",
+                    np.array(class_idx).astype(np.int32),
                 )
                 
         elif config["format"] == "npy":
@@ -519,6 +574,25 @@ def main():
                 np.save(
                     os.path.join(args.dumpdir, f"{utt_id}-f0.npy"),
                     f0.astype(np.float32),
+                    allow_pickle=False,
+                )
+                np.save(
+                    os.path.join(args.dumpdir, f"{utt_id}-vuv.npy"),
+                    vuv.astype(np.int32),
+                    allow_pickle=False,
+                )
+            if spk_embed_loader:
+                spk_embed = spk_embed_loader[utt_id]
+                np.save(
+                    os.path.join(args.dumpdir, f"{utt_id}-spemb.npy"),
+                    spk_embed.astype(np.float32),
+                    allow_pickle=False,
+                )
+            if class_idx_loader:
+                class_idx = class_idx_loader[utt_id]
+                np.save(
+                    os.path.join(args.dumpdir, f"{utt_id}-class_idx.npy"),
+                    np.array(class_idx).astype(np.int32),
                     allow_pickle=False,
                 )
 

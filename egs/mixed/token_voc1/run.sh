@@ -55,14 +55,18 @@ multi_token_files=""    # list of multi token (only used in multi token pattern)
 # multi_token_mix_type="sequence" # ["sequence", "frame"], mix type of multi token
 
 use_f0=true                                   # whether to add f0
+use_vuv=false                                 # whether to add vuv
 use_embedding_feats=false                     # whether to use pretrain feature as input
 use_spk_embed=false                           # whether to use speaker embedding
+use_class_condition=false                     # whether to use class condition
 vc_datadir="" # directory to save vc features TODO(jhan): personal use only, remove this in PR
 vc_dumpdir="" # directory to save vc features TODO(jhan): personal use only, remove this in PR
 spk_embed_scp_tag="espnet_spk"                # scp file for pre-extracted speaker embeddings
+class_scp_tag="class"
 pretrained_model="facebook/hubert-base-ls960" # pre-trained model (confirm it on Huggingface)
 use_multi_layer=false          # Whether to use multi layer
 feat_layer=3                    # Number of total layers for multi layer, specific layer for single layer.
+use_gpu_in_preprocess=false # Whether to use GPU in preprocess. Prefer to use GPU for crepe f0 extraction.
 
 fs=16000
 subexp="exp"
@@ -150,6 +154,18 @@ EOF
         if [ "${use_spk_embed}" = true ]; then
             extra_files+="${datadir}/${name}/${spk_embed_scp_tag}.scp "
         fi
+
+        if [ "${use_class_condition}" = true ]; then
+            extra_files+="${datadir}/${name}/${class_scp_tag}.scp "
+        fi
+        for file in ${token_files}; do
+            if [ ! -f "${datadir}/${name}/${file}" ]; then
+                echo "ERROR: ${datadir}/${name}/${file} does not exist."
+                exit 1
+            fi
+            extra_files+="${datadir}/${name}/${file} "
+        done
+
         utils/make_subset_data.sh "${datadir}/${name}" "${n_jobs}" "${dumpdir}/${name}/raw" "${extra_files}"
 
         _opts=
@@ -175,14 +191,26 @@ EOF
         if [ "${use_spk_embed}" = true ]; then
             _opts+="--spk-embed-scp ${dumpdir}/${name}/raw/${spk_embed_scp_tag}.JOB.scp "
         fi
+        if [ "${use_class_condition}" = true ]; then
+            _opts+="--class-scp ${dumpdir}/${name}/raw/${class_scp_tag}.JOB.scp "
+        fi
 
         # preprocess embedding feature instead of token
-        ${train_cmd} JOB=1:${n_jobs} "${dumpdir}/${name}/raw/preprocessing.JOB.log" \
-            local/preprocess_token.py \
-                --config "${conf}" \
-                --scp "${dumpdir}/${name}/raw/wav.JOB.scp" \
-                --dumpdir "${dumpdir}/${name}/raw/dump.JOB" \
-                --verbose "${verbose}" ${_opts}
+        if [ "${use_gpu_in_preprocess}" = true ]; then
+            ${cuda_cmd} JOB=1:${n_jobs} --gpu "${n_gpus}" "${dumpdir}/${name}/raw/preprocessing.JOB.log" \
+                local/preprocess_token.py \
+                    --config "${conf}" \
+                    --scp "${dumpdir}/${name}/raw/wav.JOB.scp" \
+                    --dumpdir "${dumpdir}/${name}/raw/dump.JOB" \
+                    --verbose "${verbose}" ${_opts}
+        else
+            ${train_cmd} JOB=1:${n_jobs} "${dumpdir}/${name}/raw/preprocessing.JOB.log" \
+                local/preprocess_token.py \
+                    --config "${conf}" \
+                    --scp "${dumpdir}/${name}/raw/wav.JOB.scp" \
+                    --dumpdir "${dumpdir}/${name}/raw/dump.JOB" \
+                    --verbose "${verbose}" ${_opts}
+        fi
         echo "Successfully finished feature extraction of ${name} set."
     ) &
     pids+=($!)
@@ -215,6 +243,12 @@ if [ "${stage}" -le 2 ] && [ "${stop_stage}" -ge 2 ]; then
     fi
     if [ "${use_spk_embed}" = true ]; then
         _opts+="--additional-feature-keys spemb "
+    fi
+    if [ "${use_class_condition}" = true ]; then
+        _opts+="--additional-feature-keys class_idx "
+    fi
+    if [ "${use_vuv}" = true ]; then
+        _opts+="--additional-feature-keys vuv "
     fi
     # shellcheck disable=SC2012
     resume="$(ls -dt "${expdir}"/*.pkl | head -1 || true)"
@@ -253,6 +287,10 @@ if [ "${stage}" -le 3 ] && [ "${stop_stage}" -ge 3 ]; then
         if [ "${use_spk_embed}" = true ]; then
             _opts+="--additional-feature-keys spemb "
         fi
+        if [ "${use_class_condition}" = true ]; then
+            _opts+="--additional-feature-keys class_idx "
+        fi
+
         ${cuda_cmd} --gpu "${n_gpus}" "${outdir}/${name}/decode.log" \
             parallel-wavegan-decode \
                 --dumpdir "${dumpdir}/${name}/raw" \
