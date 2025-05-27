@@ -1073,9 +1073,7 @@ class Collater(object):
                                 for feat, start, end in zip(features, c_starts, c_ends)
                             ]
                         )
-                        if key.endswith(
-                            "_t0"
-                        )  # for sequential features in time, where the first dimension is time
+                        if key == "vuv"  # for sequential features in time, where the first dimension is time
                         else np.array(features)  # for non-sequential features
                     )
                     for key, features in additional_features.items()
