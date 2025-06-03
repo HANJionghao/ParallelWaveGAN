@@ -290,6 +290,9 @@ if [ "${stage}" -le 3 ] && [ "${stop_stage}" -ge 3 ]; then
         if [ "${use_class_condition}" = true ]; then
             _opts+="--additional-feature-keys class_idx "
         fi
+        if [ "${use_vuv}" = true ]; then
+            _opts+="--additional-feature-keys vuv "
+        fi
 
         ${cuda_cmd} --gpu "${n_gpus}" "${outdir}/${name}/decode.log" \
             parallel-wavegan-decode \

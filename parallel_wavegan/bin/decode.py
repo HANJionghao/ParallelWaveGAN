@@ -10,6 +10,7 @@ import argparse
 import logging
 import os
 import time
+from functools import partial
 
 import numpy as np
 import soundfile as sf
@@ -128,7 +129,7 @@ def main():
         "--additional-feature-keys",
         default=[], # TODO(jhan): verify if works when --additional-feature-keys is not specified
         type=str,
-        nargs="*",
+        action="append",
         help="additional feature keys to use.",
     )
     args = parser.parse_args()
@@ -211,7 +212,7 @@ def main():
                     resolution_query = "*.h5"
                     resolution_load_fn = lambda x: read_hdf5(x, "resolution")
                 additional_feature_query_load_fn = {
-                    key: ("*.h5", lambda x: read_hdf5(x, key))
+                    key: ("*.h5", partial(lambda x, _key: read_hdf5(x, _key), _key=key))
                     for key in args.additional_feature_keys
                 }
             elif config["format"] == "npy":
