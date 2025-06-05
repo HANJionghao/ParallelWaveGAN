@@ -14,7 +14,7 @@ find "$dir" -type f -name "*.wav" | while IFS= read -r file; do
     duration=$(soxi -D "$file") 
 
     if (( $(bc <<< "$duration < $min_duration") )); then
-        echo "Removing short audio file: $file (duration: $duration seconds)"
+        # echo "Removing short audio file: $file (duration: $duration seconds)"
         rm "$file"
     fi
 done

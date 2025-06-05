@@ -26,7 +26,7 @@ fi
     cd ${espnet_path}/egs2/ami/asr1
     . ./path.sh
 
-    scripts/utils/extract_spk_embed_utt.sh --nj 1 \
+    scripts/utils/extract_spk_embed_utt.sh --nj "${nj}" \
         --gpu "${ngpu}" \
         --cmd "${cmd}" \
         --data "${data_split_dir}" \

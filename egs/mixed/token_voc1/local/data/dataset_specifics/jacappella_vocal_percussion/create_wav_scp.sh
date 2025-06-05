@@ -37,20 +37,19 @@ for subset_dir in "${dataset_folder}"/*; do
         fi
         for song_dir in "${subset_dir}"/*; do
             song=$(basename "${song_dir}")
-            for voice_part in lead_vocal soprano alto tenor bass; do
-                audio="${song_dir}/${voice_part}.wav"
-                if [ ! -f "${audio}" ]; then
-                    echo "Error: ${audio} does not exist. Please check folder structure or missing files."
-                    exit 1
-                fi
-                utt_id=jacappella_${subset}_${song}_${voice_part}
-                echo "${utt_id} ${audio}" >> "${output_wav_scp}"
-            done
+            voice_part=vocal_percussion
+            audio="${song_dir}/${voice_part}.wav"
+            if [ ! -f "${audio}" ]; then
+                echo "Error: ${audio} does not exist. Please check folder structure or missing files."
+                exit 1
+            fi
+            utt_id=jacappella_${subset}_${song}_${voice_part}
+            echo "${utt_id} ${audio}" >> "${output_wav_scp}"
         done
     fi
 done
 
-sort -u "${output_wav_scp}" -o "${output_wav_scp}"
+sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"
 
 if [ "$verbose" = true ]; then
     echo "Finished creating ${output_wav_scp} from ${dataset_folder} for jaCappella dataset"

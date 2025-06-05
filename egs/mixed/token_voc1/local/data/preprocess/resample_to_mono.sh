@@ -1,10 +1,16 @@
+set -e
+set -u
+set -o pipefail
+
 source_wav_scp=wav.scp
 output_wav_scp=wav16k.scp
 wav_dump=wav_dump16k
 fs=16000
+
 append=false
-audio_ext=flac
+audio_ext=wav
 resample_tool=sox
+reject_low_fs="warning_and_skip" # "error", "warning", "warning_and_skip"
 
 # shellcheck disable=SC1091
 . utils/parse_options.sh || exit 1
@@ -31,7 +37,22 @@ if [ "${resample_tool}" = "sox" ]; then
             exit 1
         fi
         outfile="${wav_dump}/${utt_id}.${audio_ext}"
-        sox "${wav_file}" -r "${fs}" -b 16 -c 1 "${outfile}"
+        src_fs=$(soxi -r "${wav_file}")
+        if [ "${src_fs}" -lt "${fs}" ]; then
+            if [ "${reject_low_fs}" = "error" ]; then
+                echo "Source file ${wav_file} has sampling rate ${src_fs} Hz, which is lower than the target ${fs} Hz. Exiting."
+                exit 1
+            elif [ "${reject_low_fs}" = "warning" ]; then
+                echo "Warning: Source file ${wav_file} has sampling rate ${src_fs} Hz, which is lower than the target ${fs} Hz. Resampling will proceed."
+            elif [ "${reject_low_fs}" = "warning_and_skip" ]; then
+                echo "Warning: Source file ${wav_file} has sampling rate ${src_fs} Hz, which is lower than the target ${fs} Hz. Skipping this file."
+                continue
+            else
+                echo "Invalid value for reject_low_fs: ${reject_low_fs}. Please set it to 'error' or 'warning'."
+                exit 1
+            fi
+        fi
+        sox -q "${wav_file}" -r "${fs}" -b 16 -c 1 "${outfile}"
         echo "${utt_id} $(realpath ${outfile})" >>"${output_wav_scp}"
     done <"${source_wav_scp}"
 elif [ "${resample_tool}" = "torchaudio" ]; then # TODO(jhan): not tested

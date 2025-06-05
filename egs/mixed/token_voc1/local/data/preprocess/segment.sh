@@ -3,7 +3,7 @@
 set -euo pipefail
 
 max_wav_duration=15.0
-min_wav_duration=0.4
+min_wav_duration=0.37
 source_wav_scp=wav.scp
 output_wav_scp=wav_segment.scp
 wav_dump=wav_dump
@@ -21,8 +21,7 @@ fi
 
 wav_dump_parent_dir=$(dirname "${wav_dump}")
 mkdir -p "${wav_dump_parent_dir}"
-tmp_dir="${wav_dump_parent_dir}/tmp$(uuidgen)"
-mkdir -p "${tmp_dir}"
+tmp_dir=$(mktemp -d "${wav_dump_parent_dir}/tmpXXXXXX")
 
 while IFS=" " read -r utt wav_path; do
     if [ "${verbose}" = true ]; then
@@ -108,9 +107,11 @@ if [ "${append}" = false ]; then
     > "${output_wav_scp}"
 fi
 
-find "$wav_dump" -type f | sort | while IFS= read -r file; do
+find "$wav_dump" -type f | while IFS= read -r file; do
     filename=$(basename "${file}")
     utt="${filename%.*}"
     file=$(realpath "${file}")
     echo "${utt} ${file}" >> "${output_wav_scp}"
 done
+
+LC_ALL=C sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"

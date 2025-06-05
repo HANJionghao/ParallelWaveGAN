@@ -42,7 +42,7 @@ find "${dataset_folder}/monophonic/chinese" -type f -name "*.wav" | sort | while
     echo "${utt_id} ${file}" >> "${output_wav_scp}"
 done
 
-sort -u "${output_wav_scp}" -o "${output_wav_scp}"
+sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"
 
 if [ "$verbose" = true ]; then
     echo "Finished creating ${output_wav_scp} from ${dataset_folder} for opera-qmul dataset"

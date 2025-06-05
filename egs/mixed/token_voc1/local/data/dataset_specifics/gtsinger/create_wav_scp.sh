@@ -67,6 +67,8 @@ for lang in ${languages}; do
     done
 done
 
+sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"
+
 if [ "$verbose" = true ]; then
     echo "Finished creating ${output_wav_scp} from ${dataset_folder} for GTSinger dataset"
 fi

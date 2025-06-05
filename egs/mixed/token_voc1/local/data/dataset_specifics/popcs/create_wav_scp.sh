@@ -42,7 +42,7 @@ for song_dir in "${dataset_folder}"/popcs-*; do
     fi
 done
 
-sort -u "${output_wav_scp}" -o "${output_wav_scp}"
+sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"
 
 if [ "$verbose" = true ]; then
     echo "Finished creating ${output_wav_scp} from ${dataset_folder} for popcs dataset"

@@ -8,7 +8,7 @@ km_folder=/ocean/projects/cis210027p/jhan7/cartoon_voice/model/espnet_dev/egs2/m
 kmeans_features= # e.g., "hubert_large_ll60k/6/1024 wavlm_large/23/1024 wavlm_large/6/1024"
 RVQ_layers=1
 audio_sample_rate=
-audio_ext=flac
+audio_ext=wav # Currently, only wav is supported for pwg
 cmd=
 use_gpu=true
 nj=1
@@ -57,7 +57,10 @@ fi
     done
 
     # reach each feature
+    pids=()
+
     for kmeans_feature in $kmeans_features; do
+    (
         nclusters=$(echo $kmeans_feature | cut -d'/' -f3)
 
         if [ ${kmeans_feature} = "mfcc" ]; then # MFCC has no layer
@@ -78,6 +81,7 @@ fi
                 kmeans_feature_conf="{type=s3prl,conf={s3prl_conf=${s3prl_conf},download_dir=ckpt,multilayer_feature=False,layer=${layer}}}"
             fi
         fi
+
         km_path="${km_folder}/${kmeans_feature_type}_${layer}_${nclusters}clusters/km_${nclusters}.mdl"
 
         mkdir -p "${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}"
@@ -98,25 +102,14 @@ fi
                 "scp:${data_split_dir}/logs/inference_kmeans.JOB.scp" \
                 "ark,t:${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}/km${nclusters}.JOB.txt" || exit 1
 
-        # for JOB in $(seq ${nj}); do
-        #     echo "Processing JOB ${JOB}..."
-        #     python pyscripts/feats/dump_km_label.py \
-        #         --in_filetype sound \
-        #         --online_feature_extract true \
-        #         --feature_conf "${kmeans_feature_conf}" \
-        #         --audio_sample_rate "${audio_sample_rate}" \
-        #         --km_path "${km_path}" \
-        #         --RVQ_layers "${RVQ_layers}" \
-        #         --out_filetype "mat" \
-        #         --use_gpu ${use_gpu} \
-        #         --utt2num_samples "${data_split_dir}/logs/utt2num_samples.${JOB}" \
-        #         --batch_bins 4800000 \
-        #         "scp:${data_split_dir}/logs/inference_kmeans.${JOB}.scp" \
-        #         "ark,t:${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}/km${nclusters}.${JOB}.txt" || exit 1
-        # done
-
         for n in $(seq ${nj}); do
+            if [ ! -f "${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}/km${nclusters}.${n}.txt" ]; then
+                echo "File ${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}/km${nclusters}.${n}.txt not generated."
+                exit 1
+            fi
             cat "${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}/km${nclusters}.${n}.txt" || exit 1
-        done | sed 's/ \[ \| \]//g' | sort -u >"${data_split_dir}/pseudo_labels_${kmeans_feature_type}_${layer}_km${nclusters}.txt" || exit 1
+        done | sed 's/ \[ \| \]//g' | LC_ALL=C sort -k1,1 -u >"${data_split_dir}/pseudo_labels_${kmeans_feature_type}_${layer}_km${nclusters}.txt" || exit 1
+    ) &
+    pids+=($!)
     done
 )
