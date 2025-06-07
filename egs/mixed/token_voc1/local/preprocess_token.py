@@ -124,12 +124,6 @@ def main():
         ),
     )
     parser.add_argument(
-        "--text",
-        default=None,
-        type=str,
-        help="kaldi-style text format hubert embedding index.",
-    )
-    parser.add_argument(
         "--utt2spk",
         default=None,
         type=str,
@@ -204,7 +198,7 @@ def main():
         help="all layer numbert or specific layer",
     )
     parser.add_argument(
-        "--multi-token-files",
+        "--token-files",
         type=str,
         default="",
         help="list of token files in multi token pattern",
@@ -286,10 +280,10 @@ def main():
 
     if args.use_embedding_feats is False:
         # get token single layer / multi layer
-        if args.multi_token_files:  # multi-stream: directory of token files
-            logging.info(f"Use multi token files: {args.multi_token_files}")
+        if args.token_files:  # multi-stream: directory of token files
+            logging.info(f"Use token files: {args.token_files}")
             text = {}
-            token_files = args.multi_token_files.strip().split(" ")
+            token_files = args.token_files.strip().split(" ")
             for fpath in token_files:
                 if not os.path.exists(fpath):
                     raise FileExistsError(f"{fpath} does not exist.")
@@ -301,13 +295,6 @@ def main():
                             text[utt_name] = []
                         # combine in sequence way, [T]
                         text[utt_name].append(tokens)
-        elif not os.path.isdir(args.text):  # single layer token file
-            with open(args.text) as f:
-                lines = [line.strip() for line in f.readlines()]
-            text = {
-                line.split(maxsplit=1)[0]: line.split(maxsplit=1)[1].split()
-                for line in lines
-            }
 
     # load spk2utt file
     if args.utt2spk is not None:
@@ -334,11 +321,10 @@ def main():
         print("Using CrepeF0Predictor")
         f0_predictor = CrepeF0Predictor(
             hop_length=config["hop_size"],
-            f0_min=config["f0_predictor_params"]["f0_min"],
-            f0_max=config["f0_predictor_params"]["f0_max"],
-            device=None,
+            device="cuda" if torch.cuda.is_available() else "cpu",
             sampling_rate=config["sampling_rate"],
             use_log_f0=True,
+            **config["f0_predictor_params"],
         )
     else:
         f0_predictor = None
@@ -423,14 +409,9 @@ def main():
             else:
                 # use hubert index instead of mel
                 mel = np.array(text[utt_id]).astype(np.int64)  # [L, T], 'sequence'
-                if mel.ndim > 1:
-                    mel = mel.transpose(1, 0)
-                else:
-                    mel = mel.reshape(-1, 1)
-                # mel input as (T, 1)
+                assert mel.ndim == 2, f"{utt_id} token should be 2D, but got {mel.ndim}D. Shape: {mel.shape}"
+                mel = mel.transpose(1, 0) # [T, L]
                 # NOTE(Yuxun): add mix_type for multi token, mel is under 'frame' type here.
-                if args.use_multi_layer:
-                    mel = mel.reshape(-1, args.feat_layer)  # [T, L]
 
         if args.spk2idx is not None:
             if args.use_multi_resolution_token:
@@ -486,8 +467,10 @@ def main():
             # logging.info(f'f0({f0.shape}): {f0}')
             if len(f0) > len(mel):
                 f0 = f0[: len(mel)]
+                vuv = vuv[: len(mel)]
             else:
                 f0 = np.pad(f0, (0, len(mel) - len(f0)), mode="edge")
+                vuv = np.pad(vuv, (0, len(mel) - len(vuv)), mode="edge")
 
         # apply global gain
         if config["global_gain_scale"] > 0.0:
@@ -558,7 +541,7 @@ def main():
                     "class_idx",
                     np.array(class_idx).astype(np.int32),
                 )
-                
+
         elif config["format"] == "npy":
             np.save(
                 os.path.join(args.dumpdir, f"{utt_id}-wave.npy"),
