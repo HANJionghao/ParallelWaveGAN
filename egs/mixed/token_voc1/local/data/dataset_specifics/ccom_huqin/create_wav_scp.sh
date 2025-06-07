@@ -118,14 +118,15 @@ for instrument_folder in "${dataset_folder}/SinglePT/"*; do
                     hash_concat=$(echo -n "${concatenated}" | md5sum | cut -c1-16)
                     output_file="${output_dir}/${hash_concat}.wav"
                     sox "${concat_files[@]}" "$output_file"
-                    echo "${utt_prefix}_SinglePT_${instrument}_${skill}_${concatenated} ${output_file}" >> "${output_wav_scp}"
+                    echo "[CCOM-HuQin] Concatenated ${#concat_files[@]} files into ${output_file}"
+                    echo "${utt_prefix}_SinglePT_${instrument}_${skill}_${hash_concat} ${output_file}" >> "${output_wav_scp}"
                 fi
             done
         fi
     done
 done
 
-sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"
+LC_ALL=C sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"
 
 if [ "$verbose" = true ]; then
     echo "[INFO] Finished creating ${output_wav_scp} from ${dataset_folder} for the CCOM-HuQin dataset"
