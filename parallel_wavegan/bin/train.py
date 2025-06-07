@@ -142,16 +142,25 @@ class Trainer(object):
             "steps": self.steps,
             "epochs": self.epochs,
         }
+        if "generator_predictor" in self.model:
+            state_dict["model"]["generator_predictor"] = self.model["generator_predictor"].state_dict()
+            state_dict["optimizer"]["generator_predictor"] = self.optimizer["generator_predictor"].state_dict()
+            state_dict["scheduler"]["generator_predictor"] = self.scheduler["generator_predictor"].state_dict()
+
         if self.config["distributed"]:
             state_dict["model"] = {
                 "generator": self.model["generator"].module.state_dict(),
                 "discriminator": self.model["discriminator"].module.state_dict(),
             }
+            if "generator_predictor" in self.model:
+                state_dict["model"]["generator_predictor"] = self.model["generator_predictor"].module.state_dict()
         else:
             state_dict["model"] = {
                 "generator": self.model["generator"].state_dict(),
                 "discriminator": self.model["discriminator"].state_dict(),
             }
+            if "generator_predictor" in self.model:
+                state_dict["model"]["generator_predictor"] = self.model["generator_predictor"].state_dict()
 
         if not os.path.exists(os.path.dirname(checkpoint_path)):
             os.makedirs(os.path.dirname(checkpoint_path))
@@ -174,6 +183,10 @@ class Trainer(object):
                 state_dict["model"]["discriminator"],
                 strict=False,
             )
+            if "generator_predictor" in self.model:
+                self.model["generator_predictor"].module.load_state_dict(
+                    state_dict["model"]["generator_predictor"],
+                )
         else:
             self.model["generator"].load_state_dict(
                 state_dict["model"]["generator"],
@@ -182,6 +195,10 @@ class Trainer(object):
                 state_dict["model"]["discriminator"],
                 strict=False,
             )
+            if "generator_predictor" in self.model:
+                self.model["generator_predictor"].load_state_dict(
+                    state_dict["model"]["generator_predictor"],
+                )
         if not load_only_params:
             self.steps = state_dict["steps"]
             self.epochs = state_dict["epochs"]
@@ -191,12 +208,20 @@ class Trainer(object):
             self.optimizer["discriminator"].load_state_dict(
                 state_dict["optimizer"]["discriminator"]
             )
+            if "generator_predictor" in self.model:
+                self.optimizer["generator_predictor"].load_state_dict(
+                    state_dict["optimizer"]["generator_predictor"]
+                )
             self.scheduler["generator"].load_state_dict(
                 state_dict["scheduler"]["generator"]
             )
             self.scheduler["discriminator"].load_state_dict(
                 state_dict["scheduler"]["discriminator"]
             )
+            if "generator_predictor" in self.model:
+                self.scheduler["generator_predictor"].load_state_dict(
+                    state_dict["scheduler"]["generator_predictor"]
+                )
 
     def _train_step(self, batch):
         """Train model one step."""
