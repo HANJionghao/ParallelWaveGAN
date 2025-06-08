@@ -11,6 +11,7 @@ append=false
 verbose=false
 segment_mode="multi" # multi or once
 remove_short=true
+remove_long=false
 
 # shellcheck disable=SC1091
 . utils/parse_options.sh || exit 1
@@ -82,12 +83,18 @@ if [ "${segment_mode}" = "multi" ]; then
     done
 fi
 
-# remove short audio files
-if [ "${remove_short}" = true ]; then
+# filter out audio by duration
+if [ "${remove_short}" = false ]; then
+    min_wav_duration=none
+fi
+if [ "${remove_long}" = false ]; then
+    max_wav_duration=none
+fi
+if [ "${remove_short}" = true ] || [ "${remove_long}" = true ]; then
     if [ "${verbose}" = true ]; then
-        echo "Removing short audio files less than ${min_wav_duration} seconds for ${wav_dump}."
+        echo "Removing audio files based on duration for ${wav_dump}."
     fi
-    sh local/data/preprocess/remove_short_audio.sh "${tmp_dir}" ${min_wav_duration}
+    sh local/data/preprocess/remove_audio_by_duration.sh "${tmp_dir}" ${min_wav_duration} ${max_wav_duration}
 fi
 
 # move the segments to the wav_dump
