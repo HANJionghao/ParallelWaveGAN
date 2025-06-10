@@ -1,0 +1,6 @@
+bbc_sound_effects,data_scaleup/44100Hz_non_human_0516_processed/bbc_sound_effects,tr_no_dev,dev,eval
+dsd100_instrumental,data_scaleup/44100Hz_non_human_0516_processed/dsd100_instrumental,tr_no_dev,dev,eval
+ebird_kaggle,data_scaleup/44100Hz_non_human_0516_processed/ebird_kaggle,tr_no_dev,dev,eval
+esc50,data_scaleup/44100Hz_non_human_0516_processed/esc50,tr_no_dev,dev,eval
+gdc,data_scaleup/44100Hz_non_human_0516_processed/gdc,tr_no_dev,dev,eval
+urbansound8k,data_scaleup/44100Hz_non_human_0516_processed/urbansound8k,tr_no_dev,dev,eval
