@@ -36,7 +36,11 @@ if [ "${resample_tool}" = "sox" ]; then
             echo "File ${wav_file} does not exist. Please check ${source_wav_scp}."
             exit 1
         fi
-        outfile="${wav_dump}/${utt_id}.${audio_ext}"
+        outfile=$(realpath "${wav_dump}/${utt_id}.${audio_ext}")
+        if [ ! -s "${wav_file}" ]; then
+            echo "[WARN] File ${wav_file} is empty. Skipping this file."
+            continue
+        fi
         src_fs=$(soxi -r "${wav_file}")
         if [ "${src_fs}" -lt "${fs}" ]; then
             if [ "${reject_low_fs}" = "error" ]; then
@@ -53,7 +57,7 @@ if [ "${resample_tool}" = "sox" ]; then
             fi
         fi
         sox -q "${wav_file}" -r "${fs}" -b 16 -c 1 "${outfile}"
-        echo "${utt_id} $(realpath ${outfile})" >>"${output_wav_scp}"
+        echo "${utt_id} ${outfile}" >>"${output_wav_scp}"
     done <"${source_wav_scp}"
 elif [ "${resample_tool}" = "torchaudio" ]; then # TODO(jhan): not tested
     # Check if torchaudio is installed

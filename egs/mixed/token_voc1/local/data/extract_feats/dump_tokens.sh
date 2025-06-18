@@ -44,11 +44,15 @@ fi
         echo "utt2num_samples already exists."
     fi
 
-    split_scps=""
-    for n in $(seq ${nj}); do
-        split_scps+=" ${data_split_dir}/logs/inference_kmeans.${n}.scp"
-    done
-    utils/split_scp.pl "${data_split_dir}/wav.scp" ${split_scps}
+    if [ "${nj}" -gt 1 ]; then
+        split_scps=""
+        for n in $(seq ${nj}); do
+            split_scps+=" ${data_split_dir}/logs/inference_kmeans.${n}.scp"
+        done
+        utils/split_scp.pl "${data_split_dir}/wav.scp" ${split_scps}
+    else
+        cp "${data_split_dir}/wav.scp" "${data_split_dir}/logs/inference_kmeans.1.scp"
+    fi
 
     for n in $(seq ${nj}); do
         awk '(FILENAME==ARGV[1]){utt2num[$1]=$2} (FILENAME==ARGV[2]){print($1, utt2num[$1])}' \
@@ -76,6 +80,9 @@ fi
                 kmeans_feature_conf="{type=encodec,conf={fs=48000,bandwidth=12,multilayer_feature=False,layer=${layer},download_path=${encodec_url}}}"
             elif [ ${kmeans_feature_type} = "contentvec" ]; then
                 kmeans_feature_conf="{type=contentvec,conf={layer=${layer}}}"
+            # contentvec2
+            elif [ ${kmeans_feature_type} = "contentvec2" ]; then
+                kmeans_feature_conf="{type=contentvec2,conf={layer=${layer}}}"
             elif [ ${kmeans_feature_type} != "multi" ]; then
                 s3prl_conf="{upstream=${kmeans_feature_type}}"
                 kmeans_feature_conf="{type=s3prl,conf={s3prl_conf=${s3prl_conf},download_dir=ckpt,multilayer_feature=False,layer=${layer}}}"
@@ -83,11 +90,15 @@ fi
         fi
 
         km_path="${km_folder}/${kmeans_feature_type}_${layer}_${nclusters}clusters/km_${nclusters}.mdl"
+        if [ ${kmeans_feature_type} = "contentvec2" ]; then
+            km_path="${km_folder}/contentvec_${layer}_${nclusters}clusters/km_${nclusters}.mdl"
+        fi
 
         mkdir -p "${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}"
 
         echo "Processing ${kmeans_feature} for ${data_split_dir}"
         ${_cmd} JOB=1:${nj} "${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}/inference_km${nclusters}.JOB.log" \
+            PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:128 \
             python pyscripts/feats/dump_km_label.py \
                 --in_filetype sound \
                 --online_feature_extract true \
@@ -98,7 +109,7 @@ fi
                 --out_filetype "mat" \
                 --use_gpu ${use_gpu} \
                 --utt2num_samples "${data_split_dir}/logs/utt2num_samples.JOB" \
-                --batch_bins 4800000 \
+                --batch_bins 1 \
                 "scp:${data_split_dir}/logs/inference_kmeans.JOB.scp" \
                 "ark,t:${data_split_dir}/logs/pseudo_labels_${kmeans_feature_type}_${layer}/km${nclusters}.JOB.txt" || exit 1
 

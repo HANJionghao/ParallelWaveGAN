@@ -89,6 +89,8 @@ if [ "${remove_short}" = false ]; then
 fi
 if [ "${remove_long}" = false ]; then
     max_wav_duration=none
+else
+    max_wav_duration=300
 fi
 if [ "${remove_short}" = true ] || [ "${remove_long}" = true ]; then
     if [ "${verbose}" = true ]; then

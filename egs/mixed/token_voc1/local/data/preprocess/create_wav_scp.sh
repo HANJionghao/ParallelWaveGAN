@@ -39,7 +39,7 @@ find "$dataset_folder" -type f \( "${args[@]}" \) | sort | while read -r file; d
     utt_id="${file#${dataset_folder}/}"
     utt_id="${utt_id%.*}" # remove file extension
     utt_id=$(echo "$utt_id" | perl -CS -pe 'chomp; s/\p{Space}/_/g') # replace spaces with underscores
-    utt_id="${utt_id//[\/.,]/_}" # e.g., "Japanese/JA-Tenor-1/Vibrato/Heartful Song/Paired_Speech_Group/0003.wav" -> "Japanese_JA-Tenor-1_Vibrato_Heartful_Song_Paired_Speech_Group_0003"
+    utt_id="${utt_id//[\/.,\']/_}" # e.g., "Japanese/JA-Tenor-1/Vibrato/Heartful Song/Paired_Speech_Group/0003.wav" -> "Japanese_JA-Tenor-1_Vibrato_Heartful_Song_Paired_Speech_Group_0003"
     echo "${dataset_tag}_${utt_id} ${file}" >> "${output_wav_scp}"
 done
 

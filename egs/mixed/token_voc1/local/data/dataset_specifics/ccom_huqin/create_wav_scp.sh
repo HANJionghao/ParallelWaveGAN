@@ -63,6 +63,7 @@ for file in "${wav_dump}/Excerpts"/*.wav; do
     audio_length=$(soxi -D "${file}")
     if [ "$(echo "${audio_length} > 0" | bc -l)" -eq 1 ]; then
         utt_id=$(basename "${file}" .wav)
+        file=$(realpath "${file}")
         echo "${utt_prefix}_${utt_id} ${file}" >> "${output_wav_scp}"
     else
         rm "${file}"
@@ -78,51 +79,14 @@ for instrument_folder in "${dataset_folder}/SinglePT/"*; do
     for skill_folder in "${instrument_folder}"/*; do
         [ -d "${skill_folder}" ] || continue
         skill=$(basename "${skill_folder}")
-        output_dir="${wav_dump}/SinglePT/${instrument}_${skill}"
-        mkdir -p "${output_dir}"
 
-        # Estimate average duration
-        estimate_num=3
-        files=("${skill_folder}"/*.wav)
-        estimate_files=("${files[@]:0:$estimate_num}")
-        if [ ${#estimate_files[@]} -lt "$estimate_num" ]; then
-            echo "[ERROR] Not enough files in ${skill_folder}. Found ${#estimate_files[@]}. Please check if download is complete."
-            exit 1
-        fi
-        estimated_duration=0
-        for file in "${estimate_files[@]}"; do
+        for file in "${skill_folder}"/*.wav; do
             duration=$(soxi -D "$file")
-            estimated_duration=$(echo "$estimated_duration + $duration" | bc)
-        done
-        avg_duration=$(echo "$estimated_duration / $estimate_num" | bc -l)
-        # Check if avg_duration is a valid number before comparison
-        if [[ -n "$avg_duration" && "$avg_duration" =~ ^[0-9]*\.?[0-9]+$ ]] && [ $(echo "$avg_duration > 0.5" | bc) -eq 1 ]; then
-            # If average duration is greater than 0.6s, output the files directly
-            for file in "${files[@]}"; do
-                outfile="${output_dir}/$(basename "${file}")"
-                cp "${file}" "${outfile}"
-                echo "${utt_prefix}_SinglePT_${instrument}_${skill}_$(basename "${file}" .wav) ${outfile}" >> "${output_wav_scp}"
-            done
-        else
-            # Concatenate files with random shuffle
-            shuffled_files=($(shuf -e "${files[@]}"))
-            concat_count=$(echo "1 / $avg_duration" | bc -l | awk '{print int($1 + 0.999)}')  # Round up
-            if [ "$concat_count" -lt 1 ]; then
-                concat_count=1
+            file=$(realpath "$file")
+            if [ $(echo "$duration > 0.37" | bc) -eq 1 ]; then
+                echo "${utt_prefix}_SinglePT_${instrument}_${skill}_$(basename "${file}" .wav) ${file}" >> "${output_wav_scp}"
             fi
-            for ((i = 0; i < ${#shuffled_files[@]}; i += concat_count)); do
-                concat_files=("${shuffled_files[@]:i:concat_count}")
-                if [ ${#concat_files[@]} -gt 0 ]; then
-                    # name by concatenated files
-                    concatenated=$(basename -a "${concat_files[@]}" | sed 's/\.wav$//' | paste -sd '-')
-                    hash_concat=$(echo -n "${concatenated}" | md5sum | cut -c1-16)
-                    output_file="${output_dir}/${hash_concat}.wav"
-                    sox "${concat_files[@]}" "$output_file"
-                    echo "[CCOM-HuQin] Concatenated ${#concat_files[@]} files into ${output_file}"
-                    echo "${utt_prefix}_SinglePT_${instrument}_${skill}_${hash_concat} ${output_file}" >> "${output_wav_scp}"
-                fi
-            done
-        fi
+        done
     done
 done
 
