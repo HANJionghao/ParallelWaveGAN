@@ -196,9 +196,14 @@ class Trainer(object):
                 strict=False,
             )
             if "generator_predictor" in self.model:
-                self.model["generator_predictor"].load_state_dict(
-                    state_dict["model"]["generator_predictor"],
-                )
+                if "generator_predictor" not in state_dict["model"]:
+                    logging.warning(
+                        "generator_predictor not found in state_dict, skipping loading generator_predictor model."
+                    )
+                else:
+                    self.model["generator_predictor"].load_state_dict(
+                        state_dict["model"]["generator_predictor"],
+                    )
         if not load_only_params:
             self.steps = state_dict["steps"]
             self.epochs = state_dict["epochs"]
@@ -209,9 +214,14 @@ class Trainer(object):
                 state_dict["optimizer"]["discriminator"]
             )
             if "generator_predictor" in self.model:
-                self.optimizer["generator_predictor"].load_state_dict(
-                    state_dict["optimizer"]["generator_predictor"]
-                )
+                if "generator_predictor" not in state_dict["optimizer"]:
+                    logging.warning(
+                        "generator_predictor not found in state_dict, skipping loading generator_predictor optimizer."
+                    )
+                else:
+                    self.optimizer["generator_predictor"].load_state_dict(
+                        state_dict["optimizer"]["generator_predictor"]
+                    )
             self.scheduler["generator"].load_state_dict(
                 state_dict["scheduler"]["generator"]
             )
@@ -219,9 +229,14 @@ class Trainer(object):
                 state_dict["scheduler"]["discriminator"]
             )
             if "generator_predictor" in self.model:
-                self.scheduler["generator_predictor"].load_state_dict(
-                    state_dict["scheduler"]["generator_predictor"]
-                )
+                if "generator_predictor" not in state_dict["scheduler"]:
+                    logging.warning(
+                        "generator_predictor not found in state_dict, skipping loading generator_predictor scheduler."
+                    )
+                else:
+                    self.scheduler["generator_predictor"].load_state_dict(
+                        state_dict["scheduler"]["generator_predictor"]
+                    )
 
     def _train_step(self, batch):
         """Train model one step."""
@@ -436,6 +451,7 @@ class Trainer(object):
                 if "f0" in preds and self.criterion["generator_predictor_f0"] is not None:
                     pred_f0 = preds["f0"]
                     target_f0 = x[1]
+                    pred_f0 = pred_f0[..., :target_f0.shape[-1]]
                     if batch_mask is not None:
                         pred_f0 = pred_f0[batch_mask]
                         target_f0 = target_f0[batch_mask]
@@ -448,6 +464,7 @@ class Trainer(object):
                 if "token" in preds and self.criterion["generator_predictor_token"] is not None:
                     pred_token = preds["token"]
                     target_token = x[0].long()
+                    pred_token = pred_token[..., :target_token.shape[-1]]
                     if batch_mask is not None:
                         pred_token = pred_token[batch_mask]
                         target_token = target_token[batch_mask]
@@ -458,8 +475,9 @@ class Trainer(object):
                     unsupervised_gen_loss += unsupervised_token_loss
                     self.total_train_loss["train/unsupervised_token_loss"] += unsupervised_token_loss.item()
                 if "spemb" in preds and self.criterion["generator_predictor_spemb"] is not None:
-                    pred_spemb = preds["spemb"]
+                    pred_spemb = preds["spemb"].mean(dim=-1)
                     target_spemb = x_ref[2]["spemb"]
+                    pred_spemb = pred_spemb[..., :target_spemb.shape[-1]]
                     if batch_mask is not None:
                         pred_spemb = pred_spemb[batch_mask]
                         target_spemb = target_spemb[batch_mask]
@@ -699,6 +717,7 @@ class Trainer(object):
                 if "f0" in preds and self.criterion["generator_predictor_f0"] is not None:
                     pred_f0 = preds["f0"]
                     target_f0 = x[1]
+                    pred_f0 = pred_f0[..., :target_f0.shape[-1]]
                     if batch_mask is not None:
                         pred_f0 = pred_f0[batch_mask]
                         target_f0 = target_f0[batch_mask]
@@ -711,6 +730,7 @@ class Trainer(object):
                 if "token" in preds and self.criterion["generator_predictor_token"] is not None:
                     pred_token = preds["token"]
                     target_token = x[0].long()
+                    pred_token = pred_token[..., :target_token.shape[-1]]
                     if batch_mask is not None:
                         pred_token = pred_token[batch_mask]
                         target_token = target_token[batch_mask]
@@ -721,8 +741,9 @@ class Trainer(object):
                     unsupervised_gen_loss += unsupervised_token_loss
                     self.total_eval_loss["eval/unsupervised_token_loss"] += unsupervised_token_loss.item()
                 if "spemb" in preds and self.criterion["generator_predictor_spemb"] is not None:
-                    pred_spemb = preds["spemb"]
+                    pred_spemb = preds["spemb"].mean(dim=-1)
                     target_spemb = x_ref[2]["spemb"]
+                    pred_spemb = pred_spemb[..., :target_spemb.shape[-1]]
                     if batch_mask is not None:
                         pred_spemb = pred_spemb[batch_mask]
                         target_spemb = target_spemb[batch_mask]
