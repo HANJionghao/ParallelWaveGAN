@@ -16,9 +16,9 @@ from torch.nn import Conv1d, ConvTranspose1d
 from torch.nn.utils import weight_norm, remove_weight_norm
 from torchaudio.transforms import Resample
 
-import activations
-from utils import init_weights, get_padding
-from alias_free_activation.torch.act import Activation1d as TorchActivation1d
+from . import activations
+from .utils import init_weights, get_padding
+from .alias_free_activation.torch.act import Activation1d as TorchActivation1d
 
 
 class AMPBlock1(torch.nn.Module):
@@ -268,6 +268,7 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
         f0_embedding_dim (int)
         use_cuda_kernel (bool): If set to True, loads optimized CUDA kernels for AMP. This should be used for inference only, as training is not supported with CUDA kernels.
     """
+
     def __init__(
         self,
         in_channels=512,
@@ -310,7 +311,7 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
         self.use_soft_tokens = use_soft_tokens
         self.use_weight_sum = use_weight_sum
         self.use_learned_weights = use_learned_weights
-        
+
         if nonlinear_activation_params is None:
             nonlinear_activation_params = {}
         # check hyperparameters are valid
@@ -322,9 +323,10 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
         assert len(upsample_scales) == len(upsample_kernel_sizes)
         assert len(resblock_dilations) == len(resblock_kernel_sizes)
         assert len(upsample_scales) != 0, "upsample_scales must not be empty"
-        assert len(upsample_kernel_sizes) != 0, "upsample_kernel_sizes must not be empty"
+        assert (
+            len(upsample_kernel_sizes) != 0
+        ), "upsample_kernel_sizes must not be empty"
 
-        
         if self.use_cuda_kernel:
             from alias_free_activation.cuda.activation1d import (
                 Activation1d as CudaActivation1d,
@@ -354,25 +356,31 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
 
         # F0 embedding (if use_f0 is True)
         if self.use_f0:
-            self.f0_embedding = torch.nn.Linear(in_features=1, out_features=f0_embedding_dim)
+            self.f0_embedding = torch.nn.Linear(
+                in_features=1, out_features=f0_embedding_dim
+            )
             conv_pre_channels += f0_embedding_dim
 
         # Speaker embedding
         if self.num_speakers > 0:
-            self.speaker_embedding = torch.nn.Embedding(num_embeddings=num_speakers, embedding_dim=speaker_embedding_dim)
+            self.speaker_embedding = torch.nn.Embedding(
+                num_embeddings=num_speakers, embedding_dim=speaker_embedding_dim
+            )
         if self.num_speakers > 0 or self.use_speaker_embedding:
             if self.speaker_feature_fusion == "concat":
                 conv_pre_channels += speaker_embedding_dim
             elif self.speaker_feature_fusion == "add":
-                assert speaker_embedding_dim == conv_pre_channels, \
-                    f"Speaker embedding dimension {speaker_embedding_dim} must match conv_pre_channels {conv_pre_channels} for 'add' fusion."
+                assert (
+                    speaker_embedding_dim == conv_pre_channels
+                ), f"Speaker embedding dimension {speaker_embedding_dim} must match conv_pre_channels {conv_pre_channels} for 'add' fusion."
             elif self.speaker_feature_fusion == "fc_add":
-                self.speaker_embedding_proj = torch.nn.Linear(speaker_embedding_dim, conv_pre_channels)
+                self.speaker_embedding_proj = torch.nn.Linear(
+                    speaker_embedding_dim, conv_pre_channels
+                )
             else:
                 raise NotImplementedError(
                     f"Speaker feature fusion method '{self.speaker_feature_fusion}' is not implemented."
                 )
-
 
         # Pre-conv
         self.conv_pre = weight_norm(
@@ -403,7 +411,7 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
                     [
                         weight_norm(
                             ConvTranspose1d(
-                                channels // (2 ** i),
+                                channels // (2**i),
                                 channels // (2 ** (i + 1)),
                                 k,
                                 u,
@@ -418,16 +426,16 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
         self.resblocks = nn.ModuleList()
         for i in range(len(self.ups)):
             ch = channels // (2 ** (i + 1))
-            for j, (k, d) in enumerate(
-                zip(resblock_kernel_sizes, resblock_dilations)
-            ):
+            for j, (k, d) in enumerate(zip(resblock_kernel_sizes, resblock_dilations)):
                 self.resblocks.append(
                     resblock_class(
                         channels=ch,
                         kernel_size=k,
                         dilation=d,
                         activation=nonlinear_activation,
-                        snake_logscale=nonlinear_activation_params.get("snake_logscale", True),
+                        snake_logscale=nonlinear_activation_params.get(
+                            "snake_logscale", True
+                        ),
                         use_cuda_kernel=use_cuda_kernel,
                     )
                 )
@@ -435,11 +443,13 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
         # Post-conv
         if nonlinear_activation == "snake":
             activation_post = activations.Snake(
-                ch, alpha_logscale=nonlinear_activation_params.get("snake_logscale", True)
+                ch,
+                alpha_logscale=nonlinear_activation_params.get("snake_logscale", True),
             )
         elif nonlinear_activation == "snakebeta":
             activation_post = activations.SnakeBeta(
-                ch, alpha_logscale=nonlinear_activation_params.get("snake_logscale", True)
+                ch,
+                alpha_logscale=nonlinear_activation_params.get("snake_logscale", True),
             )
         else:
             raise NotImplementedError(
@@ -470,7 +480,7 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
     def forward(self, x, f0=None, additional_feats=None):
         """
         Calculate forward propagation.
-        
+
         Args:
             x (Tensor): Input token tensor: (B, L, T) for discrete tokens, (B, L, T, in_channels) for continuous tokens
             f0 (Tensor): Input f0 tensor (B, 1, T)
@@ -483,22 +493,22 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
         # Embedding for discrete symbols
         if not self.use_soft_tokens:
             token_embeddings = [
-                self.token_embedding[i](x[:, i, :].long()) # (B, T, in_channels)
+                self.token_embedding[i](x[:, i, :].long())  # (B, T, in_channels)
                 for i in range(self.num_token_layers)
             ]
             x = torch.stack(token_embeddings, dim=1)  # (B, L, T, in_channels)
-            x = x.transpose(1, -1) # (B, in_channels, T, L)
+            x = x.transpose(1, -1)  # (B, in_channels, T, L)
         else:
-            x = x.transpose(1, -1) # (B, in_channels, T, L)
-        
+            x = x.transpose(1, -1)  # (B, in_channels, T, L)
+
         if x.size(1) == 1:
             x = x.squeeze(1)
         elif self.use_weight_sum:
             if self.use_learned_weights:
-                norm_weights = F.softmax(self.token_weights, dim=0) # (L,)
+                norm_weights = F.softmax(self.token_weights, dim=0)  # (L,)
                 x = torch.matmul(x, norm_weights)
             else:
-                x = torch.mean(x, dim=-1) # (B, in_channels, T)
+                x = torch.mean(x, dim=-1)  # (B, in_channels, T)
         else:
             raise NotImplementedError(
                 "Not implemented for use_weight_sum=False and num_token_layers>1"
@@ -511,21 +521,29 @@ class DiscreteSymbolBigVGAN(torch.nn.Module):
 
         # Speaker embedding
         if self.num_speakers > 0:
-            assert "sid" in additional_feats, f"Speaker ID (sid) must be provided in additional_feats. Current keys: {additional_feats.keys()}"
-            spemb = self.speaker_embedding(additional_feats["sid"].long()) # (B, speaker_embedding_dim)
+            assert (
+                "sid" in additional_feats
+            ), f"Speaker ID (sid) must be provided in additional_feats. Current keys: {additional_feats.keys()}"
+            spemb = self.speaker_embedding(
+                additional_feats["sid"].long()
+            )  # (B, speaker_embedding_dim)
         if self.use_speaker_embedding:
-            assert "spemb" in additional_feats, f"Speaker embedding must be provided in additional_feats. Current keys: {additional_feats.keys()}. Please rerun run.sh with --use_spk_embed true"
+            assert (
+                "spemb" in additional_feats
+            ), f"Speaker embedding must be provided in additional_feats. Current keys: {additional_feats.keys()}. Please rerun run.sh with --use_spk_embed true"
             spemb = F.normalize(additional_feats["spemb"])
         if self.num_speakers > 0 or self.use_speaker_embedding:
             if self.speaker_feature_fusion == "concat":
-                spemb = spemb.unsqueeze(2).expand(-1, -1, x.size(2)) # (B, speaker_embedding_dim, T)
-                x = torch.cat([x, spemb], dim=1) # (B, C + speaker_embedding_dim, T)
+                spemb = spemb.unsqueeze(2).expand(
+                    -1, -1, x.size(2)
+                )  # (B, speaker_embedding_dim, T)
+                x = torch.cat([x, spemb], dim=1)  # (B, C + speaker_embedding_dim, T)
             elif self.speaker_feature_fusion == "add":
-                spemb = spemb.unsqueeze(2) # (B, C, 1)
-                x = x + spemb # (B, C, T)
+                spemb = spemb.unsqueeze(2)  # (B, C, 1)
+                x = x + spemb  # (B, C, T)
             elif self.speaker_feature_fusion == "fc_add":
                 spemb = self.speaker_embedding_proj(spemb).unsqueeze(2)
-                x = x + spemb # (B, C, T)
+                x = x + spemb  # (B, C, T)
 
         # Pre-conv
         x = self.conv_pre(x)
@@ -575,6 +593,7 @@ class DiscriminatorCQT(nn.Module):
         hop_length: int,
         n_octaves: int,
         bins_per_octave: int,
+        normalize_volume: bool = False,
     ):
         super().__init__()
 
@@ -593,7 +612,13 @@ class DiscriminatorCQT(nn.Module):
         self.bins_per_octave = bins_per_octave
 
         # Lazy-load
-        from nnAudio import features
+        try:
+            from nnAudio import features
+        except ImportError:
+            raise ImportError(
+                "Please install nnAudio library to use this model. "
+                "You can install it using 'pip install nnAudio'."
+            )
 
         self.cqt_transform = features.cqt.CQT2010v2(
             sr=self.fs * 2,
@@ -673,10 +698,10 @@ class DiscriminatorCQT(nn.Module):
         self.activation = torch.nn.LeakyReLU(negative_slope=0.1)
         self.resample = Resample(orig_freq=self.fs, new_freq=self.fs * 2)
 
-        self.cqtd_normalize_volume = self.cfg.get("cqtd_normalize_volume", False)
-        if self.cqtd_normalize_volume:
+        self.normalize_volume = normalize_volume
+        if self.normalize_volume:
             print(
-                f"[INFO] cqtd_normalize_volume set to True. Will apply DC offset removal & peak volume normalization in CQTD!"
+                f"[INFO] normalize_volume set to True. Will apply DC offset removal & peak volume normalization in CQTD!"
             )
 
     def get_2d_padding(
@@ -692,7 +717,7 @@ class DiscriminatorCQT(nn.Module):
     def forward(self, x: torch.tensor) -> Tuple[torch.Tensor, List[torch.Tensor]]:
         outs = []
 
-        if self.cqtd_normalize_volume:
+        if self.normalize_volume:
             # Remove DC offset
             x = x - x.mean(dim=-1, keepdims=True)
             # Peak normalize the volume of input audio
@@ -805,10 +830,9 @@ class BigVGANMultiResolutionMultiPeriodDiscriminator(torch.nn.Module):
         """
         super().__init__()
         if mpd_type != "HiFiGANMultiPeriodDiscriminator":
-            raise NotImplementedError(
-                f"mpd_type {mpd_type} is not supported."
-            )
+            raise NotImplementedError(f"mpd_type {mpd_type} is not supported.")
         import parallel_wavegan.models.hifigan
+
         mpd_class = parallel_wavegan.models.hifigan.HiFiGANMultiPeriodDiscriminator
         self.mpd = mpd_class(**mpd_params)
         ALLOWED_MRD_TYPES = {

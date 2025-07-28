@@ -4,4 +4,4 @@ from .parallel_wavegan import *  # NOQA
 from .style_melgan import *  # NOQA
 from .uhifigan import *  # NOQA
 from .vqvae import *  # NOQA
-from .bigvgan import *  # NOQA
+from .bigvgan.bigvgan import *  # NOQA

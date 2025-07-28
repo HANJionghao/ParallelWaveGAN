@@ -606,6 +606,10 @@ class Trainer(object):
             mel_loss = self.criterion["mel"](y_, y)
             aux_loss += mel_loss
             self.total_eval_loss["eval/mel_loss"] += mel_loss.item()
+        if self.config["use_multiscale_mel_loss"]:
+            multiscale_mel_loss = self.criterion["multiscale_mel"](y_, y)
+            aux_loss += multiscale_mel_loss
+            self.total_eval_loss["eval/multiscale_mel_loss"] += multiscale_mel_loss.item()
 
         # weighting stft loss
         aux_loss *= self.config.get("lambda_aux", 1.0)

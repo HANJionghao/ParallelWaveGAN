@@ -6,6 +6,3 @@ opera-qmul,data_scaleup/44100Hz_human_nonespnet_0601_processed/opera-qmul,tr_no_
 popcs,data_scaleup/44100Hz_human_nonespnet_0601_processed/popcs,tr_no_dev,dev,eval
 singstyle111,data_scaleup/44100Hz_human_nonespnet_0601_processed/singstyle111,tr_no_dev,dev,eval
 vocalset,data_scaleup/44100Hz_human_nonespnet_0601_processed/vocalset,tr_no_dev,dev,eval
-nit_song070,/ocean/projects/cis210027p/jhan7/svs/espnet/egs2/nit_song070/svs1/dump44k/raw,tr_no_dev,dev,eval
-jsut_song,/ocean/projects/cis210027p/jhan7/svs/espnet/egs2/jsut_song/svs1/dump44k/raw,train,dev,eval
-mixed,/ocean/projects/cis210027p/jhan7/cartoon_voice/model/ParallelWaveGAN/egs/mixed/token_voc1/data_human44.1k,tr_no_dev,dev,eval

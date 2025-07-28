@@ -1,0 +1,6 @@
+arca23k,data_scaleup/44100Hz_non_human_0516_processed/arca23k,tr_no_dev,dev,eval
+dbr,data_scaleup/44100Hz_non_human_0516_processed/dbr,tr_no_dev,dev,eval
+desed_synthetic,data_scaleup/44100Hz_non_human_0516_processed/desed_synthetic,tr_no_dev,dev,eval
+freefield1010,data_scaleup/44100Hz_non_human_0516_processed/freefield1010,tr_no_dev,dev,eval
+fsd2019,data_scaleup/44100Hz_non_human_0516_processed/fsd2019,tr_no_dev,dev,eval
+fsd50k,data_scaleup/44100Hz_non_human_0516_processed/fsd50k,tr_no_dev,dev,eval
