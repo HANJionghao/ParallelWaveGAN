@@ -1,9 +1,8 @@
-gtsinger,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/GTSinger,multi
-jacappella_singing,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/jaCappella_v1,multi
-no7singing,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/no7singing,multi
-opensinger,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/OpenSinger,multi
-opera-qmul,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/SingingDatabase,multi
-popcs,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/popcs,multi
-singstyle111,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/singstyle111,multi
-vocalset,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/VocalSet,once
-jsut_song,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/jsut-song_ver1,multi
+gtsinger,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/GTSinger,multi,all_train
+jacappella_singing,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/jaCappella_v1,multi,native2/50
+no7singing,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/no7singing,multi,native3
+opensinger,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/OpenSinger,multi,native3
+opera-qmul,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/SingingDatabase,multi,all_test
+popcs,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/popcs,multi,native3
+singstyle111,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/singstyle111,multi,all_train
+vocalset,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/VocalSet,once,all_train

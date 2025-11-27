@@ -273,6 +273,7 @@ def main():
     else:
         dataset = AudioSCPDataset(
             args.wav_scp,
+            audio_length_threshold=config.get("audio_length_threshold", None),
             segments=args.segments,
             return_utt_id=True,
             return_sampling_rate=True,

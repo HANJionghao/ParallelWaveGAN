@@ -1,6 +1,7 @@
-ccom_huqin,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/CCOM-HuQin-v2.0-audios,none
-fsd2018,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/fsd2018,multi
-good_sounds,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/Good-sounds,multi
-jacappella_vocal_percussion,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/jaCappella_v1,multi
-philharmonia_orchestra_samples,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/philharmonia_orchestra_samples,multi
-urmp,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/urmp/Dataset,multi
+ccom_huqin,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/CCOM-HuQin-v2.0-audios,none,split10pt/50
+fsd50k,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/fsd50k,multi,native3
+good_sounds,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/Good-sounds,multi,split10pt/50
+jacappella_vocal_percussion,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/jaCappella_v1,multi,native2/50
+philharmonia_orchestra_samples,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/philharmonia_orchestra_samples,multi,split10pt/50
+urmp,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/urmp/Dataset,multi,split10pt/50
+musdb18hq_instrumental,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/musdb18hq,multi,native2/50

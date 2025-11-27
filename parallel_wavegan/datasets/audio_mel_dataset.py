@@ -464,9 +464,10 @@ class AudioMelF0Dataset(Dataset):
             mel_files = [mel_files[idx] for idx in idxs]
             f0_files = [f0_files[idx] for idx in idxs]
             for key in additional_features.keys():
-                additional_features[key] = [
-                    additional_features[key][0][idx] for idx in idxs
-                ]
+                additional_features[key] = (
+                    [additional_features[key][0][idx] for idx in idxs],
+                    additional_features[key][1]
+                )
 
         # assert the number of files
         assert len(audio_files) != 0, f"Not found any audio files in ${root_dir}."
@@ -1327,9 +1328,10 @@ class MelF0Dataset(Dataset):
             mel_files = [mel_files[idx] for idx in idxs]
             f0_files = [f0_files[idx] for idx in idxs]
             for key in additional_features.keys():
-                additional_features[key] = [
-                    additional_features[key][0][idx] for idx in idxs
-                ]
+                additional_features[key] = (
+                    [additional_features[key][0][idx] for idx in idxs],
+                    additional_features[key][1]
+                )
 
         # assert the number of files
         assert len(mel_files) != 0, f"Not found any mel files in ${root_dir}."

@@ -35,7 +35,7 @@ dataset_folder=$(realpath "${dataset_folder}")
 
 echo "[INFO] Creating ${output_wav_scp} from ${dataset_folder} by collecting audio files with the following extensions: ${supported_audio_exts}"
 mkdir -p "$(dirname "${output_wav_scp}")"
-find "$dataset_folder" -type f \( "${args[@]}" \) | sort | while read -r file; do
+find "$dataset_folder" -type f \( "${args[@]}" \) ! -name '._*' | sort | while read -r file; do
     utt_id="${file#${dataset_folder}/}"
     utt_id="${utt_id%.*}" # remove file extension
     utt_id=$(echo "$utt_id" | perl -CS -pe 'chomp; s/\p{Space}/_/g') # replace spaces with underscores
@@ -43,7 +43,7 @@ find "$dataset_folder" -type f \( "${args[@]}" \) | sort | while read -r file; d
     echo "${dataset_tag}_${utt_id} ${file}" >> "${output_wav_scp}"
 done
 
-sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"
+LC_ALL=C sort -k1,1 -u "${output_wav_scp}" -o "${output_wav_scp}"
 
 if [ "$verbose" = true ]; then
     echo "[INFO] Finished creating ${output_wav_scp} from ${dataset_folder} for dataset: ${dataset_tag}"

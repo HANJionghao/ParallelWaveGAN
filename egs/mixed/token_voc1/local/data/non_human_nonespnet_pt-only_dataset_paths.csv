@@ -1,6 +1,5 @@
-bbc_sound_effects,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/BBCSoundEffectsComplete,multi
-dsd100_instrumental,/ocean/projects/cis210027p/jhan7/svs/data_downloads/dataset/DSD100/DSD100,multi
-ebird_kaggle,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/ebird_kaggle,multi
-esc50,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/esc50,multi
-gdc,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/gdc_game_audio_bundle,multi
-urbansound8k,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/urbansound8k,multi
+bbc_sound_effects,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/BBCSoundEffectsComplete/sounds,multi,split10pt/100
+ebird_kaggle,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/ebird_kaggle/train_audio,multi,all_train/100
+esc50,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/esc50/ESC-50-master,multi,native3
+gdc,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/gdc_game_audio_bundle,multi,split10pt/100
+urbansound8k,/ocean/projects/cis210027p/jhan7/cartoon_voice/data/non_human/dataset/urbansound8k/UrbanSound8K,multi,native3

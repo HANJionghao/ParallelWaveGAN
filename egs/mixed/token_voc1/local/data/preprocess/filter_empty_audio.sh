@@ -8,6 +8,12 @@ if [ $# -ne 1 ]; then
 fi
 
 source_wav_scp=$1
+# skip if the file is empty
+if [ ! -s "${source_wav_scp}" ]; then
+    echo "File ${source_wav_scp} is empty. Skipping."
+    exit 0
+fi
+
 tmp_wav_scp="$source_wav_scp.$(uuidgen).tmp"
 
 while read -r line; do

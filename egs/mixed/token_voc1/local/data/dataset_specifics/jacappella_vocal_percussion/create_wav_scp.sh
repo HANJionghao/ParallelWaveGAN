@@ -1,5 +1,6 @@
 dataset_folder=
-output_wav_scp=
+train_scp=
+eval_scp=
 verbose=false
 
 # Expected directory structure:
@@ -22,13 +23,28 @@ if [ -z "${dataset_folder}" ]; then
     echo "Please set the dataset_folder variable."
     exit 1
 fi
-if [ -z "${output_wav_scp}" ]; then
-    echo "Please set the output_wav_scp variable."
+if [ -z "${train_scp}" ] || [ -z "${eval_scp}" ]; then
+    echo "Please set the train_scp and eval_scp variables."
     exit 1
 fi
 
-echo "Creating ${output_wav_scp} from ${dataset_folder} for jaCappella dataset"
-mkdir -p "$(dirname "${output_wav_scp}")"
+eval_song_list=(
+    anomachikonomachi
+    dongurikorokoro
+    hiraitahiraita
+    katatsumuri
+    koinobori
+    otamajakushi
+    usagitokame
+    nakayoshikomichi
+    sunayama
+    inu
+)
+
+echo "Creating ${train_scp} and ${eval_scp} from ${dataset_folder} for jaCappella dataset"
+mkdir -p "$(dirname "${train_scp}")"
+mkdir -p "$(dirname "${eval_scp}")"
+
 for subset_dir in "${dataset_folder}"/*; do
     if [ -d "${subset_dir}" ]; then
         subset=$(basename "${subset_dir}")
@@ -37,6 +53,12 @@ for subset_dir in "${dataset_folder}"/*; do
         fi
         for song_dir in "${subset_dir}"/*; do
             song=$(basename "${song_dir}")
+            # check if song is in test_song_list
+            if [[ ! " ${eval_song_list[*]} " =~ " ${song} " ]]; then
+                output_wav_scp="${train_scp}"
+            else
+                output_wav_scp="${eval_scp}"
+            fi
             voice_part=vocal_percussion
             audio="${song_dir}/${voice_part}.wav"
             if [ ! -f "${audio}" ]; then

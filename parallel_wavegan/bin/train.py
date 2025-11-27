@@ -143,7 +143,6 @@ class Trainer(object):
             "epochs": self.epochs,
         }
         if "generator_predictor" in self.model:
-            state_dict["model"]["generator_predictor"] = self.model["generator_predictor"].state_dict()
             state_dict["optimizer"]["generator_predictor"] = self.optimizer["generator_predictor"].state_dict()
             state_dict["scheduler"]["generator_predictor"] = self.scheduler["generator_predictor"].state_dict()
 
@@ -1811,6 +1810,55 @@ def main():
             }
         else:
             raise ValueError("support only hdf5 or npy format.")
+    
+    # get data loader
+    for x in ["train", "dev"]:
+        if not args.use_multi_resolution_token:
+            collater_type = config.get(f"{x}_collater_type", "Collater")
+            collater_class = COLLATER_REGISTRY[collater_type]
+            collater = {
+                x: collater_class(
+                    batch_max_steps=config["batch_max_steps"],
+                    hop_size=config.get("hop_size", None),
+                    aux_context_window=config["generator_params"].get("aux_context_window", 0),
+                    use_f0=args.use_f0,
+                    use_f0_and_excitation=use_f0_and_excitation,
+                    use_noise_input=use_noise_input,
+                    use_aux_input=use_aux_input,
+                    use_duration=use_duration,
+                    use_global_condition=use_global_condition,
+                    use_local_condition=use_local_condition,
+                    pad_value=config["generator_params"].get(
+                        "num_embs", 0
+                    ),  # assume 0-based discrete symbol
+                    **config.get(f"{x}_collater_conf", {}),
+                )
+                for x in ["train", "dev"]
+            }
+        else:
+            assert (
+                "train_batch_sampler_type" not in config
+                and "dev_batch_sampler_type" not in config
+            ), "Batch sampler is not supported for now in multi-resolution token."
+            collater = {
+                x: Collater_MR(
+                    batch_max_steps=config["batch_max_steps"],
+                    hop_size=config.get("hop_size", None),
+                    aux_context_window=config["generator_params"].get("aux_context_window", 0),
+                    use_f0=args.use_f0,
+                    use_f0_and_excitation=use_f0_and_excitation,
+                    use_multi_resolution_token=args.use_multi_resolution_token,
+                    use_noise_input=use_noise_input,
+                    use_aux_input=use_aux_input,
+                    use_duration=use_duration,
+                    use_global_condition=use_global_condition,
+                    use_local_condition=use_local_condition,
+                    pad_value=config["generator_params"].get(
+                        "num_embs", 0
+                    ),  # assume 0-based discrete symbol
+                )
+                for x in ["train", "dev"]
+            }
 
     # setup length threshold
     if config["remove_short_samples"]:
@@ -2024,55 +2072,7 @@ def main():
     logging.info(f"The number of training files = {len(train_dataset)}.")
     logging.info(f"The number of development files = {len(dev_dataset)}.")
 
-    # get data loader
-    for x in ["train", "dev"]:
-        if not args.use_multi_resolution_token:
-            collater_type = config.get(f"{x}_collater_type", "Collater")
-            collater_class = COLLATER_REGISTRY[collater_type]
-            collater = {
-                x: collater_class(
-                    batch_max_steps=config["batch_max_steps"],
-                    hop_size=config.get("hop_size", None),
-                    aux_context_window=config["generator_params"].get("aux_context_window", 0),
-                    use_f0=args.use_f0,
-                    use_f0_and_excitation=use_f0_and_excitation,
-                    use_noise_input=use_noise_input,
-                    use_aux_input=use_aux_input,
-                    use_duration=use_duration,
-                    use_global_condition=use_global_condition,
-                    use_local_condition=use_local_condition,
-                    pad_value=config["generator_params"].get(
-                        "num_embs", 0
-                    ),  # assume 0-based discrete symbol
-                    **config.get(f"{x}_collater_conf", {}),
-                )
-                for x in ["train", "dev"]
-            }
-        else:
-            assert (
-                "train_batch_sampler_type" not in config
-                and "dev_batch_sampler_type" not in config
-            ), "Batch sampler is not supported for now in multi-resolution token."
-            collater = {
-                x: Collater_MR(
-                    batch_max_steps=config["batch_max_steps"],
-                    hop_size=config.get("hop_size", None),
-                    aux_context_window=config["generator_params"].get("aux_context_window", 0),
-                    use_f0=args.use_f0,
-                    use_f0_and_excitation=use_f0_and_excitation,
-                    use_multi_resolution_token=args.use_multi_resolution_token,
-                    use_noise_input=use_noise_input,
-                    use_aux_input=use_aux_input,
-                    use_duration=use_duration,
-                    use_global_condition=use_global_condition,
-                    use_local_condition=use_local_condition,
-                    pad_value=config["generator_params"].get(
-                        "num_embs", 0
-                    ),  # assume 0-based discrete symbol
-                )
-                for x in ["train", "dev"]
-            }
-        sampler = {"train": None, "dev": None}
+    sampler = {"train": None, "dev": None}
     if args.distributed:
         # setup sampler for distributed training
         from torch.utils.data.distributed import DistributedSampler

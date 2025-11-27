@@ -80,9 +80,10 @@ class PairBatchSampler(Sampler):
 
         for i, (source_batch, reference_batch) in enumerate(zip(self.source_batch_sampler, reference_batch_iterator)):
             self.batch_list.append(source_batch + reference_batch)
-
-        # Handle the last batch when drop_last=False
-        if not self.drop_last and self.batch_list and len(self.batch_list[-1]) < self.batch_size * 2:
+        # Handle the last batch
+        if self.drop_last:
+            self.batch_list = self.batch_list[:-1]
+        elif self.batch_list and len(self.batch_list[-1]) < self.batch_size * 2:
             self.batch_list[-1] = self.batch_list[-1][:(len(self.batch_list[-1]) - self.batch_size) * 2]
 
     def __repr__(self) -> str:

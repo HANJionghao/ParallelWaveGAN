@@ -11,24 +11,25 @@ stage=-1       # stage to start
 stop_stage=100 # stage to stop
 verbose=1      # verbosity level (lower is less info)
 n_gpus=1       # number of gpus in training
-n_gpus_eval=0       # number of gpus in training
+n_gpus_eval=1       # number of gpus in decoding
 n_jobs=8       # number of parallel jobs in feature extraction
 
 # NOTE(kan-bayashi): renamed to conf to avoid conflict in parse_options.sh
 conf=conf/hifigan_token_16k_nodp_f0.v1.yaml
 
 # directory path setting
-raw_dataset_paths=local/data/raw_dataset_paths.csv
+nonespnet_dataset_paths=local/data/nonespnet_dataset_paths.csv
 espnet_dataset_paths=local/data/espnet_dataset_paths.csv
 combined_dataset_paths=local/data/combined_dataset_paths.csv
-datasets_to_extract_feats=local/data/combined_dataset_paths.csv # set it to local/data/raw_dataset_paths.csv if espnet files already generated labels
+datasets_to_extract_feats=local/data/combined_dataset_paths.csv # set it to local/data/nonespnet_dataset_paths.csv if espnet files already generated labels
 
 dumpdir=dump           # directory to dump features
 datadir=data           # directory to save data
+processed_datasets_dir= # directory to save processed datasets
 wav_dump=wav_dump # directory to save wav files
 
 # preprocessing and feats extraction setting
-audio_ext=flac # audio file extension to be used after resampling
+audio_ext=wav # audio file extension to be used after resampling. Please use "wav" due to compatibility with kaldiio.
 use_gpu_in_feats_extract=true
 km_folder=
 kmeans_features=
@@ -40,6 +41,9 @@ local_data_opts=
 tag=""     # tag for directory to save model
 resume=""  # checkpoint path to resume training
            # (e.g. <path>/<to>/checkpoint-10000steps.pkl)
+pretrain="" # checkpoint path to be used for pretraining
+              # if not provided, the latest one will be used
+              # (e.g. <path>/<to>/checkpoint-400000steps.pkl)
 
 # decoding related setting
 checkpoint="" # checkpoint path to be used for decoding
@@ -51,7 +55,7 @@ dev_set="dev"           # name of development data direcotry
 eval_set="test"         # name of evaluation data direcotry
 
 token_text=""
-multi_token_files=""    # list of multi token (only used in multi token pattern)
+token_files=""    # list of multi token (only used in multi token pattern)
 # multi_token_mix_type="sequence" # ["sequence", "frame"], mix type of multi token
 
 use_f0=true                                   # whether to add f0
@@ -94,12 +98,19 @@ if [ "${stage}" -le 0 ] && [ "${stop_stage}" -ge 0 ]; then
     else
         _cmd="${decode_cmd}"
     fi
+    if [ "${audio_ext}" != "wav" ]; then
+        echo "ERROR: audio_ext must be wav due to compatibility with kaldiio. Got ${audio_ext}."
+        exit 1
+    fi
+    if [ -z "${processed_datasets_dir}" ]; then
+        processed_datasets_dir="${datadir}_processed"
+    fi
     ./local/data/data.sh \
-        --raw_dataset_paths "${raw_dataset_paths}" \
+        --nonespnet_dataset_paths "${nonespnet_dataset_paths}" \
         --espnet_dataset_paths "${espnet_dataset_paths}" \
         --combined_dataset_paths "${combined_dataset_paths}" \
         --datasets_to_extract_feats "${datasets_to_extract_feats}" \
-        --processed_datasets_dir "${datadir}_processed" \
+        --processed_datasets_dir "${processed_datasets_dir}" \
         --combined_datadir "${datadir}" \
         --wav_dump "${wav_dump}" \
         --resampled_wav_dump "wav_dump_resampled${fs}" \
@@ -125,28 +136,21 @@ fi
 
 if [ "${stage}" -le 1 ] && [ "${stop_stage}" -ge 1 ]; then
     echo "Stage 1: Feature extraction"
-    # if use multi token, multi_token_files should be provided
-    if [ "${use_multi_layer}" = true ]; then
-        if [ -z "${multi_token_files}" ]; then
-            echo "Valid --multi_token_files is not provided. Please prepare it by yourself."
-            exit 1
-        fi
-    else
-        if [ -z "${token_text}" ]; then
-            echo "Valid --token_text is not provided. Please prepare it by yourself."
-            echo "--token_text have is the path of a kaldi-style text file. Below is an example."
-            cat << EOF
+    # if use multi token, token_files should be provided
+    if [ -z "${token_files}" ]; then
+        echo "Valid --token_files is not provided. Please prepare it by yourself."
+        echo "Each token file path points to a kaldi-style text file. Below is an example."
+        cat << EOF
 ----------------------------------
 utt_id_1 0 0 0 0 1 1 1 1 2 2 2 2
 utt_id_2 0 0 0 0 0 0 3 3 3 3 3 3 5 5 5 5
 ...
 EOF
-            exit 1
-        fi
+        exit 1
     fi
     # extract raw features
     pids=()
-    for name in "${train_set}" "${dev_set}" "${eval_set}"; do
+    for name in ${dev_set} ${eval_set} ${train_set}; do
     (
         [ ! -e "${dumpdir}/${name}/raw" ] && mkdir -p "${dumpdir}/${name}/raw"
         echo "Feature extraction start. See the progress via ${dumpdir}/${name}/raw/preprocessing.*.log."
@@ -251,7 +255,14 @@ if [ "${stage}" -le 2 ] && [ "${stop_stage}" -ge 2 ]; then
         _opts+="--additional-feature-keys vuv "
     fi
     # shellcheck disable=SC2012
-    resume="$(ls -dt "${expdir}"/*.pkl | head -1 || true)"
+    # 如果pretrain为空，那么resume为最新的checkpoint，否则resume=""
+    if [ -z "${pretrain}" ]; then
+        if [ -z "${resume}" ]; then
+            resume="$(ls -dt "${expdir}"/*.pkl | head -1 || true)"
+        fi
+    else
+        resume=""
+    fi
     echo "Training start. See the progress via ${expdir}/train.log."
     ${cuda_cmd} --gpu "${n_gpus}" "${expdir}/train.log" \
         ${train} \
@@ -262,6 +273,7 @@ if [ "${stage}" -le 2 ] && [ "${stop_stage}" -ge 2 ]; then
             --dev-batch-sampler-conf "${dev_batch_sampler_conf}" \
             --outdir "${expdir}" \
             --resume "${resume}" \
+            --pretrain "${pretrain}" \
             --verbose "${verbose}" ${_opts}
     echo "Successfully finished training."
 fi
@@ -270,7 +282,9 @@ if [ "${stage}" -le 3 ] && [ "${stop_stage}" -ge 3 ]; then
     echo "Stage 3: Network decoding"
     # shellcheck disable=SC2012
     [ -z "${checkpoint}" ] && checkpoint="$(ls -dt "${expdir}"/*.pkl | head -1 || true)"
-    outdir="${expdir}/wav/$(basename "${checkpoint}" .pkl)"
+    current_dir=$(dirname "$0")
+    dumpdir_tag="${dumpdir#${current_dir}/}"
+    outdir="${expdir}/wav/$(basename "${checkpoint}" .pkl)/${dumpdir_tag}"
     pids=()
     for name in "${dev_set}" "${eval_set}"; do
     (
@@ -294,20 +308,34 @@ if [ "${stage}" -le 3 ] && [ "${stop_stage}" -ge 3 ]; then
             _opts+="--additional-feature-keys vuv "
         fi
 
-        ${cuda_cmd} --gpu "${n_gpus}" "${outdir}/${name}/decode.log" \
-            parallel-wavegan-decode \
-                --dumpdir "${dumpdir}/${name}/raw" \
-                --checkpoint "${checkpoint}" \
-                --outdir "${outdir}/${name}" \
-                --verbose "${verbose}" ${_opts} 
-        if [ "${use_spk_embed}" = true ] && [ -n "${vc_dumpdir}" ]; then
-            [ ! -e "${outdir}_vc/${name}" ] && mkdir -p "${outdir}_vc/${name}"
-            ${cuda_cmd} --gpu "${n_gpus}" "${outdir}_vc/${name}/decode.log" \
+        # check if there is ${outdir}/${name}/*.wav
+        if [ ! -d "${outdir}/${name}" ] || [ -z "$(find "${outdir}/${name}" -maxdepth 1 -type f -name '*.wav')" ]; then
+            echo "Decoding start. See the progress via ${outdir}/${name}/decode.log."
+            ${cuda_cmd} --gpu "${n_gpus}" "${outdir}/${name}/decode.log" \
                 parallel-wavegan-decode \
-                    --dumpdir "${vc_dumpdir}/${name}/raw" \
+                    --dumpdir "${dumpdir}/${name}/raw" \
                     --checkpoint "${checkpoint}" \
-                    --outdir "${outdir}_vc/${name}" \
-                    --verbose "${verbose}" ${_opts} 
+                    --outdir "${outdir}/${name}" \
+                    --verbose "${verbose}" ${_opts}
+        else
+            echo "Skip decoding of ${name} set since ${outdir}/${name} already exists and is not empty."
+        fi
+        
+        if [ "${use_spk_embed}" = true ] && [ -n "${vc_dumpdir}" ]; then
+            vc_dumpdir_tag="${vc_dumpdir#${current_dir}/}"
+            outdir_vc="${expdir}/wav/$(basename "${checkpoint}" .pkl)/${vc_dumpdir_tag}"
+            if [ ! -d "${outdir_vc}/${name}" ] || [ -z "$(find "${outdir_vc}/${name}" -maxdepth 1 -type f -name '*.wav')" ]; then
+                echo "Decoding ${name} set for VC. See the progress via ${outdir_vc}/${name}/decode.log."
+                [ ! -e "${outdir_vc}/${name}" ] && mkdir -p "${outdir_vc}/${name}"
+                ${cuda_cmd} --gpu "${n_gpus}" "${outdir_vc}/${name}/decode.log" \
+                    parallel-wavegan-decode \
+                        --dumpdir "${vc_dumpdir}/${name}/raw" \
+                        --checkpoint "${checkpoint}" \
+                        --outdir "${outdir_vc}/${name}" \
+                        --verbose "${verbose}" ${_opts}
+            else
+                echo "Skip decoding of ${name} set for VC since ${outdir_vc}/${name} already exists and is not empty."
+            fi
         fi
         echo "Successfully finished decoding of ${name} set."
     ) &
@@ -321,10 +349,12 @@ fi
 if [ "${stage}" -le 4 ] && [ "${stop_stage}" -ge 4 ]; then
     echo "Stage 4: Scoring"
     [ -z "${checkpoint}" ] && checkpoint="$(ls -dt "${expdir}"/*.pkl | head -1 || true)"
+    current_dir=$(dirname "$0")
+    dumpdir_tag="${dumpdir#${current_dir}/}"
+    _dir="${expdir}/wav/$(basename "${checkpoint}" .pkl)/${dumpdir_tag}"
     for dset in ${eval_set}; do
         _data="${datadir}/${dset}"
         _gt_wavscp="${_data}/wav.scp"
-        _dir="${expdir}/wav/$(basename "${checkpoint}" .pkl)"
         _gen_wavdir="${_dir}/${dset}"
 
         # Objective Evaluation - MCD
@@ -395,7 +425,7 @@ if [ "${stage}" -le 4 ] && [ "${stop_stage}" -ge 4 ]; then
         else
             echo "Begin Scoring for speaker similarity metrics on ${dset}, results are written under ${_dir}/SPK_res"
             _opts=
-            if [ "${n_gpus_eval}" -gt 1 ]; then
+            if [ "${n_gpus_eval}" -gt 0 ]; then
                 _opts+="--use_gpu true "
                 _cmd="${cuda_cmd} --gpu ${n_gpus_eval}"
             else
@@ -438,8 +468,9 @@ if [ "${stage}" -le 4 ] && [ "${stop_stage}" -ge 4 ]; then
                 ${_dir}/SingMOS_res
         fi
 
-        if [ -d "${_dir}_vc" ] && [ -n "${vc_datadir}" ]; then
-            _dir_vc="${_dir}_vc"
+        vc_dumpdir_tag="${vc_dumpdir#${current_dir}/}"
+        _dir_vc="${expdir}/wav/$(basename "${checkpoint}" .pkl)/${vc_dumpdir_tag}"
+        if [ -d "${_dir_vc}" ] && [ -n "${vc_datadir}" ]; then
             _gen_wavdir_vc="${_dir_vc}/${dset}"
             _gt_wavscp_vc="${vc_datadir}/${dset}/vc_wav.scp"
 
@@ -496,7 +527,7 @@ if [ "${stage}" -le 4 ] && [ "${stop_stage}" -ge 4 ]; then
             else
                 echo "Begin Scoring for speaker similarity metrics on ${dset}, results are written under ${_dir}/VC_SPK_res"
                 _opts=
-                if [ "${n_gpus_eval}" -gt 1 ]; then
+                if [ "${n_gpus_eval}" -gt 0 ]; then
                     _opts+="--use_gpu true "
                     _cmd="${cuda_cmd} --gpu ${n_gpus_eval}"
                 else
@@ -516,6 +547,34 @@ if [ "${stage}" -le 4 ] && [ "${stop_stage}" -ge 4 ]; then
                     ${_dir}/VC_SPK_res/versa_utt2speaker_similarity \
                     'spk_similarity' \
                     ${_dir}/VC_SPK_res
+            fi
+
+            # Objective Evaluation - Speaker similarity with source speaker
+            if [ -s "${_dir}/VC_Src_SPK_res/spk_similarity_avg_result.txt" ]; then # skip if already exists
+                echo "Skip source speaker similarity scoring since ${_dir}/VC_Src_SPK_res/spk_similarity_avg_result.txt already exists"
+            else
+                echo "Begin Scoring for source speaker similarity metrics on ${dset}, results are written under ${_dir}/VC_Src_SPK_res"
+                _opts=
+                if [ "${n_gpus_eval}" -gt 0 ]; then
+                    _opts+="--use_gpu true "
+                    _cmd="${cuda_cmd} --gpu ${n_gpus_eval}"
+                else
+                    _cmd="${decode_cmd}"
+                fi
+                mkdir -p "${_dir}/VC_Src_SPK_res"
+                ${_cmd} "${_dir}/VC_Src_SPK_res/score.log" \
+                    ${versa_python} ${versa_dir}/versa/bin/scorer.py \
+                        --score_config ${versa_dir}/egs/separate_metrics/spk_similarity.yaml \
+                        --pred ${_gen_wavscp_vc} \
+                        --gt ${_gt_wavscp} \
+                        --output_file ${_dir}/VC_Src_SPK_res/versa_utt2source_speaker_similarity \
+                        --io kaldi \
+                        ${_opts}
+
+                python local/format_versa_result.py \
+                    ${_dir}/VC_Src_SPK_res/versa_utt2source_speaker_similarity \
+                    'spk_similarity' \
+                    ${_dir}/VC_Src_SPK_res
             fi
 
             # Objective Evaluation - SingMOS

@@ -19,7 +19,7 @@ fs=44100
 stage=0
 stop_stage=100
 append=false # whether to append to existing wav.scp files or folders. When set to false, it will overwrite the existing files and remove the existing folders.
-clean_up=true
+clean_up=false
 
 # Token and speaker embedding extraction
 espnet_path= # path to espnet repository, will be used to infer token files and speaker embeddings
@@ -53,7 +53,7 @@ if [ $stage -le 0 ] && [ $stop_stage -ge 0 ]; then
     if [ -f "${nonespnet_dataset_paths}" ]; then
         log_info "Data preprocessing Stage 0: Creating wav.scp files for non-ESPnet datasets from ${nonespnet_dataset_paths}"
 
-        while IFS="," read -r dataset_tag dataset_folder audio_segment_mode; do
+        while IFS="," read -r dataset_tag dataset_folder audio_segment_mode split_mode; do
             (
                 processed_data_subdir="${processed_datasets_dir}/${dataset_tag}"
                 mkdir -p "${processed_data_subdir}"
@@ -65,9 +65,26 @@ if [ $stage -le 0 ] && [ $stop_stage -ge 0 ]; then
 
                 # Run the appropriate wav.scp creation script
                 if [ -f "./local/data/dataset_specifics/${dataset_tag}/create_wav_scp.sh" ]; then
+                    _args=
+                    if [[ "$split_mode" == native2* ]]; then
+                        rm -f "${processed_data_subdir}/${train_set}_with_dev/wav_orig.scp"
+                        rm -f "${processed_data_subdir}/${eval_set}/wav_orig.scp"
+                        _args="--train_scp ${processed_data_subdir}/${train_set}_with_dev/wav_orig.scp --eval_scp ${processed_data_subdir}/${eval_set}/wav_orig.scp"
+                    elif [ "$split_mode" = "native3" ]; then
+                        rm -f "${processed_data_subdir}/${train_set}/wav_orig.scp"
+                        rm -f "${processed_data_subdir}/${dev_set}/wav_orig.scp"
+                        rm -f "${processed_data_subdir}/${eval_set}/wav_orig.scp"
+                        _args="--tr_no_dev_scp ${processed_data_subdir}/${train_set}/wav_orig.scp --dev_scp ${processed_data_subdir}/${dev_set}/wav_orig.scp --eval_scp ${processed_data_subdir}/${eval_set}/wav_orig.scp"
+                    else
+                        rm -f "${processed_data_subdir}/wav_orig.scp"
+                        _args="--output_wav_scp ${processed_data_subdir}/wav_orig.scp"
+                    fi
+                    echo ./local/data/dataset_specifics/${dataset_tag}/create_wav_scp.sh \
+                        --dataset_folder "${dataset_folder}" \
+                        ${_args}
                     ./local/data/dataset_specifics/${dataset_tag}/create_wav_scp.sh \
                         --dataset_folder "${dataset_folder}" \
-                        --output_wav_scp "${processed_data_subdir}/wav_orig.scp"
+                        ${_args}
                 else
                     ./local/data/preprocess/create_wav_scp.sh \
                         --dataset_folder "${dataset_folder}" \
@@ -90,54 +107,96 @@ if [ $stage -le 1 ] && [ $stop_stage -ge 1 ]; then
         log_info "Data preprocessing Stage 1: Preprocessing nonespnet datasets from ${nonespnet_dataset_paths}"
         pids=()
         job_names=()
-        while IFS="," read -r dataset_tag dataset_folder audio_segment_mode; do
+        while IFS="," read -r dataset_tag dataset_folder audio_segment_mode split_mode; do
             (
             log_info "Processing dataset: ${dataset_tag} from folder: ${dataset_folder}"
             processed_data_subdir="${processed_datasets_dir}/${dataset_tag}"
 
             # 1.1. Resample and combine to mono
             log_info "Resampling and combining audio files for dataset: ${dataset_tag}"
-            ./local/data/preprocess/resample_to_mono.sh \
-                --source_wav_scp "${processed_data_subdir}/wav_orig.scp" \
-                --output_wav_scp "${processed_data_subdir}/wav_orig_fs${fs}.scp" \
-                --wav_dump "${resampled_wav_dump}/${fs}/${dataset_tag}" \
-                --fs "${fs}" \
-                --append "${append}" \
-                --audio_ext "${audio_ext}"
-
-            # 1.2. Split into train/eval
-            mkdir -p "${processed_data_subdir}/${train_set}" "${processed_data_subdir}/${train_set}_with_dev" "${processed_data_subdir}/${dev_set}" "${processed_data_subdir}/${eval_set}"
-            test_percent=0.01 # 1% of the total data will be used for evaluation
-            total=$(wc -l < "${processed_data_subdir}/wav_orig_fs${fs}.scp")
-            num_test=$(echo "($total * $test_percent)/1" | bc)
-            if [ "$num_test" -lt 1 ]; then
-                num_test=1
+            if [[ "$split_mode" == native* ]]; then
+                if [[ "$split_mode" == native2* ]]; then
+                    splits=("${train_set}_with_dev" "${eval_set}")
+                elif [ "$split_mode" = "native3" ]; then
+                    splits=("${train_set}" "${dev_set}" "${eval_set}")
+                fi
+                for split in "${splits[@]}"; do
+                    ./local/data/preprocess/resample_to_mono.sh \
+                        --source_wav_scp "${processed_data_subdir}/${split}/wav_orig.scp" \
+                        --output_wav_scp "${processed_data_subdir}/${split}/wav_orig_fs${fs}.scp" \
+                        --wav_dump "${resampled_wav_dump}/${fs}/${dataset_tag}/${split}" \
+                        --fs "${fs}" \
+                        --append "${append}" \
+                        --audio_ext "${audio_ext}"
+                done
+            else
+                ./local/data/preprocess/resample_to_mono.sh \
+                    --source_wav_scp "${processed_data_subdir}/wav_orig.scp" \
+                    --output_wav_scp "${processed_data_subdir}/wav_orig_fs${fs}.scp" \
+                    --wav_dump "${resampled_wav_dump}/${fs}/${dataset_tag}" \
+                    --fs "${fs}" \
+                    --append "${append}" \
+                    --audio_ext "${audio_ext}"
             fi
 
-            log_info "Splitting dataset: ${dataset_tag} into ${train_set}_with_dev and ${eval_set} sets with num_test: ${num_test}"
-            ./local/data/preprocess/split_dataset.sh \
-                --source_file "${processed_data_subdir}/wav_orig_fs${fs}.scp" \
-                --output_train_file "${processed_data_subdir}/${train_set}_with_dev/wav.scp.tmp" \
-                --output_test_file "${processed_data_subdir}/${eval_set}/wav.scp.tmp" \
-                --num_test "${num_test}" \
-                --append false
+            # # 1.2. Split into train/eval
+            if [[ "$split_mode" == native2* ]]; then
+                splits=("${train_set}_with_dev" "${eval_set}")
+            elif [ "$split_mode" = "native3" ]; then
+                splits=("${train_set}" "${dev_set}" "${eval_set}")
+            elif [[ "$split_mode" == all_train* ]]; then
+                splits=("${train_set}_with_dev")
+                mkdir -p "${processed_data_subdir}/${train_set}_with_dev"
+                mv "${processed_data_subdir}/wav_orig_fs${fs}.scp" "${processed_data_subdir}/${train_set}_with_dev/wav_orig_fs${fs}.scp"
+                for split in "${dev_set}" "${eval_set}"; do
+                    mkdir -p "${processed_data_subdir}/${split}"
+                    >"${processed_data_subdir}/${split}/wav.scp"
+                done
+            elif [ "${split_mode}" == "all_test" ]; then
+                splits=("${eval_set}")
+                mkdir -p "${processed_data_subdir}/${eval_set}"
+                mv "${processed_data_subdir}/wav_orig_fs${fs}.scp" "${processed_data_subdir}/${eval_set}/wav_orig_fs${fs}.scp"
+                for split in "${train_set}" "${dev_set}"; do
+                    mkdir -p "${processed_data_subdir}/${split}"
+                    >"${processed_data_subdir}/${split}/wav.scp"
+                done
+            else
+                splits=("${train_set}_with_dev" "${eval_set}")
+                mkdir -p "${processed_data_subdir}/${train_set}_with_dev" "${processed_data_subdir}/${eval_set}"
+                # randomly split into train and eval
+                test_portion=$(echo "$split_mode" | cut -d'/' -f1 | sed 's/split//')
+                if [[ "$test_portion" == *"pt" ]]; then # convert to percentage if ends with pt
+                    test_portion=$(echo "$test_portion" | sed 's/pt//')
+                    total=$(wc -l < "${processed_data_subdir}/wav_orig_fs${fs}.scp")
+                    num_test=$(echo "($total * $test_portion)/100" | bc)
+                else # otherwise, use the number of test samples
+                    num_test=$test_portion
+                fi
+                log_info "Splitting dataset: ${dataset_tag} into ${train_set}_with_dev and ${eval_set} sets with num_test: ${num_test}"
+                ./local/data/preprocess/split_dataset.sh \
+                    --source_file "${processed_data_subdir}/wav_orig_fs${fs}.scp" \
+                    --output_train_file "${processed_data_subdir}/${train_set}_with_dev/wav_orig_fs${fs}.scp" \
+                    --output_test_file "${processed_data_subdir}/${eval_set}/wav_orig_fs${fs}.scp" \
+                    --num_test "${num_test}" \
+                    --append false \
+                    --random true
+            fi
 
             # 1.3. Segment
             if [ "$audio_segment_mode" != "none" ]; then
                 log_info "Segmenting audio files for dataset: ${dataset_tag} with mode: ${audio_segment_mode}"
-                for split in $eval_set "${train_set}_with_dev"; do
+                for split in "${splits[@]}"; do
                     ./local/data/preprocess/segment.sh \
-                        --source_wav_scp "${processed_data_subdir}/${split}/wav.scp.tmp" \
+                        --source_wav_scp "${processed_data_subdir}/${split}/wav_orig_fs${fs}.scp" \
                         --output_wav_scp "${processed_data_subdir}/${split}/wav.scp" \
                         --wav_dump "${wav_dump}/${dataset_tag}/${split}" \
                         --append "${append}" \
                         --segment_mode "${audio_segment_mode}" \
                         --remove_short true
-                    rm "${processed_data_subdir}/${split}/wav.scp.tmp"
                 done
             else
                 log_info "No segmentation required for dataset: ${dataset_tag}. Using original wav.scp."
-                for split in $eval_set "${train_set}_with_dev"; do
+                for split in "${splits[@]}"; do
                     mkdir -p "${wav_dump}/${dataset_tag}/${split}"
                     if [ "$append" = false ]; then
                         >"${processed_data_subdir}/${split}/wav.scp"
@@ -149,27 +208,24 @@ if [ $stage -le 1 ] && [ $stop_stage -ge 1 ]; then
                         outfile=$(realpath "${outfile}")
                         mv "${resampled_file}" "${outfile}"
                         echo "${utt_id} ${outfile}" >> "${processed_data_subdir}/${split}/wav.scp"
-                    done < "${processed_data_subdir}/${split}/wav.scp.tmp"
-                    rm "${processed_data_subdir}/${split}/wav.scp.tmp"
+                    done < "${processed_data_subdir}/${split}/wav_orig_fs${fs}.scp"
                 done
             fi
 
             # 1.4. Split train into dev and train
-            train_dev_total=$(wc -l < "${processed_data_subdir}/${train_set}_with_dev/wav.scp")
-            num_dev=$(echo "($train_dev_total * 0.05)/1" | bc)
-            if [ "$num_dev" -lt 1 ]; then
-                num_dev=1
-            elif [ "$num_dev" -gt 50 ]; then
-                num_dev=50 # Limit to 50 utterances for development set
+            if [ "$split_mode" != "native3" ] && [ "$split_mode" != "all_test" ]; then
+                # get the second part of the split_mode, e.g. native2/50, split10pt/100
+                num_dev=$(echo "${split_mode}" | cut -d'/' -f2)
+                log_info "Splitting ${train_set}_with_dev set into ${train_set} and ${dev_set} sets for dataset: ${dataset_tag} with num_dev: ${num_dev}"
+                ./local/data/preprocess/split_dataset.sh \
+                    --source_file "${processed_data_subdir}/${train_set}_with_dev/wav.scp" \
+                    --output_train_file "${processed_data_subdir}/${train_set}/wav.scp" \
+                    --output_test_file "${processed_data_subdir}/${dev_set}/wav.scp" \
+                    --num_test "${num_dev}" \
+                    --append false \
+                    --random true
+                rm -rf "${processed_data_subdir}/${train_set}_with_dev"
             fi
-            log_info "Splitting ${train_set}_with_dev set into ${train_set} and ${dev_set} sets for dataset: ${dataset_tag} with num_dev: ${num_dev}"
-            ./local/data/preprocess/split_dataset.sh \
-                --source_file "${processed_data_subdir}/${train_set}_with_dev/wav.scp" \
-                --output_train_file "${processed_data_subdir}/${train_set}/wav.scp" \
-                --output_test_file "${processed_data_subdir}/${dev_set}/wav.scp" \
-                --num_test "${num_dev}" \
-                --append false
-            rm -rf "${processed_data_subdir}/${train_set}_with_dev"
 
             # 1.5. Remove empty wavs
             for split in $dev_set $eval_set $train_set; do
@@ -180,7 +236,8 @@ if [ $stage -le 1 ] && [ $stop_stage -ge 1 ]; then
             if [ "$clean_up" = true ]; then
                 if [ -d "${resampled_wav_dump}/${fs}/${dataset_tag}" ]; then
                     rm -rf "${resampled_wav_dump}/${fs}/${dataset_tag}"
-                    rm -f "${processed_data_subdir}/wav_orig_fs${fs}.scp"
+                    find "${resampled_wav_dump}/${fs}/${dataset_tag}" -name "wav_orig_fs${fs}.scp" -delete
+                    find "${resampled_wav_dump}/${fs}/${dataset_tag}" -name "wav_orig.scp" -delete
                 fi
             fi
             ) &
@@ -218,7 +275,7 @@ if [ $stage -le 2 ] && [ $stop_stage -ge 2 ]; then
         fi
 
         if [ -f "${nonespnet_dataset_paths}" ]; then
-            while IFS="," read -r dataset_tag dataset_folder; do
+            while IFS="," read -r dataset_tag dataset_folder audio_segment_mode split_mode; do
                 processed_data_subdir="${processed_datasets_dir}/${dataset_tag}"
                 # stage 2.1. Validate data files
                 for split in $dev_set $eval_set $train_set; do
@@ -262,12 +319,27 @@ if [ $stage -le 3 ] && [ $stop_stage -ge 3 ]; then
                     exit 1
                 fi
 
-                # for split in $_dev_set $_eval_set $_train_set; do
-                for split in $_dev_set; do
+                for split in $_dev_set $_eval_set $_train_set; do
                     data_split_dir="${dataset_folder}/${split}"
                     if [ ! -d "${data_split_dir}" ]; then
                         log_error "Dataset split ${data_split_dir} does not exist. Please check if paths are correct in ${datasets_to_extract_feats}."
                         exit 1
+                    fi
+
+                    # if file is empty, skip generation and create empty files for token and spemb
+                    if [ ! -s "${data_split_dir}/wav.scp" ]; then
+                        for kmeans_feature in ${kmeans_features}; do
+                            kmeans_feature_type=$(echo "${kmeans_feature}" | cut -d'/' -f1)
+                            nclusters=$(echo "${kmeans_feature}" | cut -d'/' -f3)
+                            layer=
+                            if [ "${kmeans_feature_type}" != "mfcc" ]; then
+                                layer=$(echo "${kmeans_feature}" | cut -d'/' -f2)
+                            fi
+                            token_file="pseudo_labels_${kmeans_feature_type}_${layer}_km${nclusters}.txt"
+                            touch "${data_split_dir}/${token_file}"
+                        done
+                        touch "${data_split_dir}/${spemb_tag}.scp"
+                        continue
                     fi
 
                     # create token files
@@ -311,11 +383,15 @@ fi
 if [ $stage -le 4 ] && [ $stop_stage -ge 4 ]; then
     if [ -f "${combined_dataset_paths}" ]; then
         log_info "Data preprocessing Stage 4: Combining datasets in ${combined_dataset_paths} into ${combined_datadir}"
-        if [ "$append" = false ]; then
-            rm -rf "${combined_datadir}"
-        fi
         splits=("${dev_set}" "${eval_set}" "${train_set}")
-        mkdir -p "${combined_datadir}/${train_set}" "${combined_datadir}/${dev_set}" "${combined_datadir}/${eval_set}"
+        if [ "$append" = false ]; then
+            for split in "${splits[@]}"; do
+                if [ "${split}" != "" ]; then
+                    rm -rf "${combined_datadir}/${split}"
+                    mkdir -p "${combined_datadir}/${split}"
+                fi
+            done
+        fi
         while IFS="," read -r dataset_tag dataset_folder _train_set _dev_set _eval_set; do
             if [ ! -d "${dataset_folder}" ]; then
                 continue
@@ -365,6 +441,7 @@ if [ $stage -le 4 ] && [ $stop_stage -ge 4 ]; then
                 done
             done
         done <"${combined_dataset_paths}"
+        log_info "Created combined dataset from ${combined_dataset_paths} into ${combined_datadir}"
     else
         log_info "Combined dataset paths file ${combined_dataset_paths} does not exist. Skipped preprocessing stage 4."
     fi

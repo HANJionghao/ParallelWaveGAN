@@ -310,8 +310,10 @@ def main():
                 if additional_features is not None:
                     for key in additional_features:
                         additional_features[key] = torch.tensor(
-                            additional_features[key], dtype=torch.float # TODO(jhan): torch.float32?
-                        ).unsqueeze(0).to(device)
+                            additional_features[key], dtype=torch.float
+                        ).to(device)
+                    if "vuv" in additional_features:
+                        additional_features["vuv"] = additional_features["vuv"][: len(f0)]
                     batch.update(additional_feats=additional_features)
                 if args.store_feature:
                     batch.update(store_feature=True)

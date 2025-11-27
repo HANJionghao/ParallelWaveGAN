@@ -1,0 +1,10 @@
+###########################################################
+#                FEATURE EXTRACTION SETTING               #
+###########################################################
+sampling_rate: 44100     # Sampling rate.
+hop_size: 882            # Hop size. 320 * 44100 / 16000 = 882
+f0_predictor: "dio"    # F0 predictor type. "crepe" or "dio" is supported.
+global_gain_scale: 1.0   # Will be multiplied to all of waveform.
+trim_silence: false      # Whether to trim the start and end of silence.
+format: "hdf5"           # Feature file format. "npy" or "hdf5" is supported.
+audio_length_threshold: 0.372 # 16384 / 44100 seconds
